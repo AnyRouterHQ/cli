@@ -112,6 +112,57 @@ jobs:
           name: coverage-lcov
           path: lcov.info
 
+  # Tests and release builds run as separate jobs so neither waits on the
+  # other. Linux x86_64 tests run in the coverage job.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          # Also covers darwin-x86_64: that binary is cross-compiled on this
+          # same arm64 runner, so its host tests would be a repeat.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # PRs restore main's cache but never save, so the 10 GB repo cache
+      # holds one entry per job instead of one per branch.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # tests/tty_render.rs drives anyr in a pseudo-terminal under each shell.
+      - name: install shells for the terminal render tests (linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh fish
+
+      - name: install shells for the terminal render tests (macos)
+        if: runner.os == 'macOS'
+        run: brew install fish
+
+      # Oversubscribed threads are measured on Linux only. macOS (3 vCPU,
+      # already the flakiest leg) and Windows stay at one test per core.
+      - name: cargo nextest run
+        timeout-minutes: 20
+        env:
+          ANYR_PTY_REQUIRE_SHELLS: ${{ runner.os == 'Windows' && '0' || '1' }}
+          NEXTEST_PROFILE: ci
+          NEXTEST_TEST_THREADS: ${{ runner.os == 'Linux' && '16' || 'num-cpus' }}
+        run: cargo nextest run --locked --all-targets
+
   build:
     strategy:
       fail-fast: false
@@ -126,12 +177,9 @@ jobs:
           - os: macos-latest
             asset: anyr-darwin-arm64
             target: aarch64-apple-darwin
-          # Cross-compiled on the same arm64 runner. Its tests would run on
-          # the arm64 host and repeat the leg above, so it only builds.
           - os: macos-latest
             asset: anyr-darwin-x86_64
             target: x86_64-apple-darwin
-            skip-tests: true
           - os: windows-latest
             asset: anyr-windows-x86_64.exe
             target: x86_64-pc-windows-msvc
@@ -150,33 +198,8 @@ jobs:
       # Keyed by target: both macOS legs share an OS and would collide.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: build-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - uses: taiki-e/install-action@v2
-        if: ${{ !matrix.skip-tests }}
-        with:
-          tool: cargo-nextest
-
-      # tests/tty_render.rs drives anyr in a pseudo-terminal under each shell.
-      - name: install shells for the terminal render tests (linux)
-        if: runner.os == 'Linux' && !matrix.skip-tests
-        run: sudo apt-get update -q && sudo apt-get install -y -q zsh fish
-
-      - name: install shells for the terminal render tests (macos)
-        if: runner.os == 'macOS' && !matrix.skip-tests
-        run: brew install fish
-
-      # Oversubscribed threads are measured on Linux only. macOS (3 vCPU,
-      # already the flakiest leg) and Windows stay at one test per core.
-      - name: cargo nextest run
-        if: ${{ !matrix.skip-tests }}
-        timeout-minutes: 20
-        env:
-          ANYR_PTY_REQUIRE_SHELLS: ${{ runner.os == 'Windows' && '0' || '1' }}
-          NEXTEST_PROFILE: ci
-          NEXTEST_TEST_THREADS: ${{ runner.os == 'Linux' && '16' || 'num-cpus' }}
-        run: cargo nextest run --locked --all-targets
 
       - name: stamp beta version (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -371,8 +394,8 @@ jobs:
 
   beta:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # build no longer waits on lint, so gate the publish on all three.
-    needs: [lint, coverage, build]
+    # build no longer waits on lint or tests, so gate the publish on all of them.
+    needs: [lint, coverage, test, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
