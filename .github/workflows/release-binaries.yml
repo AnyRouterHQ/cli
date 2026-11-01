@@ -130,8 +130,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli --version 0.2.100
+      # Prebuilt binary. Keep the pin equal to wasm-bindgen in Cargo.lock.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.100
 
       - name: cargo build wasm
         run: cargo build --release --target wasm32-unknown-unknown --no-default-features
