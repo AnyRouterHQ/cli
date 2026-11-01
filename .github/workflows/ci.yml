@@ -31,7 +31,7 @@ jobs:
       # holds one entry per job instead of one per branch.
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'ci/faster-pipeline' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo fmt --check
         run: cargo fmt --check
@@ -75,7 +75,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'ci/faster-pipeline' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@v2
         with:
@@ -138,7 +138,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: test-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'ci/faster-pipeline' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@v2
         with:
@@ -199,7 +199,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'ci/faster-pipeline' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: stamp beta version (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -301,7 +301,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'ci/faster-pipeline' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-node@v4
         with:
