@@ -397,3 +397,49 @@ fn create_for_an_agent_under_another_profile_says_its_key_wins() {
         "{err}"
     );
 }
+
+#[test]
+fn create_for_an_agent_never_loses_the_minted_key() {
+    // WHY: the key exists on the server once the request returns. If saving
+    // it fails, the printed copy is the only one left.
+    let long = format!("sk-ar-v1-{}", "z".repeat(150));
+    let h = home();
+    let (base, _rx) = serve(vec![(201, format!(r#"{{"key":"{long}"}}"#))]);
+    ok(
+        &h,
+        &[
+            "keys",
+            "create",
+            "--agent",
+            "codex",
+            "--quiet",
+            "--base-url",
+            &base,
+        ],
+        None,
+    );
+    let line = launch_auth(&h, "codex", "OPENAI_API_KEY", &[]);
+    assert!(
+        line.ends_with("zzzz"),
+        "a server key is saved as sent: {line}"
+    );
+
+    // A directory at the temp path makes `write_config` fail after the mint.
+    let h = home();
+    let (base, _rx) = serve(vec![(
+        201,
+        format!(r#"{{"key":"{MINTED_KEY}","data":{{"hash":"h1"}}}}"#),
+    )]);
+    std::fs::create_dir_all(h.join("config.yaml.tmp").join("blocker")).unwrap();
+    let (code, out, err) = anyr(
+        &h,
+        &["keys", "create", "--agent", "codex", "--base-url", &base],
+        None,
+    );
+    assert_ne!(code, 0, "the save must fail here:\n{out}{err}");
+    assert!(
+        out.contains(MINTED_KEY),
+        "shown before the failed save:\n{out}{err}"
+    );
+    assert!(err.contains("was not saved for codex"), "{err}");
+}

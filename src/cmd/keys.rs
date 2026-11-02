@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::config::write_config;
@@ -44,13 +45,13 @@ fn agent_mint_credential(
         (get_string_flag(&parsed.flags, "key").is_some(), "--key"),
         (
             env.get("ANYROUTER_API_KEY")
-                .is_some_and(|k| !k.trim().is_empty()),
+                .is_some_and(|k| !k.trim().is_empty() && !crate::key::is_dummy_key(k)),
             "ANYROUTER_API_KEY",
         ),
     ] {
         if set {
             return Err(hint(&format!(
-                "{what} is set, so the new key would be minted in that key's account, not {agent}'s. Drop it, or create without --agent: {{bin}} keys create"
+                "{what} is set, so the new key would be minted in that key's account, not {agent}'s, and {what} also beats every agent key at launch. Drop it, or create without --agent: {{bin}} keys create"
             )));
         }
     }
@@ -266,9 +267,17 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                 .ok_or("Create-key response did not include a key.")?
                 .to_string();
             if let Some(agent) = &agent {
+                // Show the secret before saving: if the save fails, the key
+                // already exists on the server and this is its only copy.
+                if parsed.flag_true("quiet") {
+                    println!("{key}");
+                } else {
+                    println!("Created \"{name}\" in {account}:\n\n  {key}\n\nShown once.");
+                }
                 let bound = cfg.agent_binding(agent).and_then(|b| b.profile.clone());
-                let replaced = set_agent_key(&mut cfg, agent, &key)?;
-                write_config(&cfg, &path)?;
+                let replaced = cfg.agent_binding_mut(agent).api_key.replace(key.clone());
+                write_config(&cfg, &path)
+                    .map_err(|err| format!("The key above was not saved for {agent}: {err}"))?;
                 if let Some(bound) = bound.filter(|b| *b != account) {
                     eprintln!(
                         "{}",
@@ -277,14 +286,9 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                         ))
                     );
                 }
-                if parsed.flag_true("quiet") {
-                    println!("{key}");
-                    return Ok(0);
+                if !parsed.flag_true("quiet") {
+                    print_agent_key_saved(agent, &key, replaced.as_deref());
                 }
-                println!(
-                    "Created \"{name}\" in {account}:\n\n  {key}\n\nShown once. {agent} now launches with it."
-                );
-                print_agent_key_saved(agent, &key, replaced.as_deref());
                 return Ok(0);
             }
             if parsed.flag_true("quiet") {
@@ -359,6 +363,9 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                 return Err(hint(
                     "Pass - and paste the key on stdin, so it stays out of your shell history: {bin} keys set --agent <agent> -",
                 ));
+            }
+            if std::io::stdin().is_terminal() {
+                eprint!("Paste the key for {agent}, then press Enter: ");
             }
             let (key, _) = key_from_flag("-", &mut std::io::stdin().lock(), &mut std::io::sink())?
                 .ok_or_else(|| hint("Usage: {bin} keys set --agent <agent> -   (reads the key from stdin)"))?;
