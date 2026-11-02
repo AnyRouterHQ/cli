@@ -29,6 +29,8 @@ pub fn subcommands(command: &str) -> &'static [(&'static str, &'static str)] {
         "keys" => &[
             ("list", "List API keys"),
             ("create", "Create an API key"),
+            ("set", "Give a coding agent its own key"),
+            ("unset", "Remove a coding agent's own key"),
             ("show", "Limit, spent, endpoints and expiry of a key"),
             ("update", "Change a key's limit, endpoints, expiry or state"),
             ("audit", "List keys that look unused"),

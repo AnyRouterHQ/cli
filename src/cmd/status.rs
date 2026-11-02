@@ -12,7 +12,7 @@ use crate::config::{Config, Profile};
 use crate::http::{fetch_key_within, fetch_me_within, format_usd, KeyInfo, MeInfo};
 use crate::key::{
     config_for_credential, load_config_if_present, mask_api_key, profile_or_default,
-    resolve_api_key, resolve_base_url,
+    resolve_api_key, resolve_base_url, resolve_launch_key, KeySource,
 };
 use crate::parse::{get_string_flag, ParsedArgs};
 use crate::spawn::{catalog_model_id, display_model_id, session_model_label};
@@ -25,6 +25,46 @@ const DASHBOARD_URL: &str = "https://anyrouter.dev/dashboard";
 /// about 0.25 s warm and 1 s cold, so 4 s leaves room for a slow first
 /// DNS + TLS handshake that overran the old 3 s.
 const IDENTITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// One agent's launch credential as `anyr <agent>` would resolve it now.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AgentKeyRow {
+    pub agent: String,
+    /// `None` when nothing resolves (a bound account with no key).
+    pub source: Option<KeySource>,
+    pub key_masked: String,
+}
+
+impl AgentKeyRow {
+    fn text(&self) -> String {
+        match &self.source {
+            Some(source) => format!("{} · {}", self.key_masked, source.label()),
+            None => "no key".into(),
+        }
+    }
+}
+
+/// Agents that carry their own key or account binding, resolved the same way
+/// launch resolves them.
+pub(crate) fn agent_key_rows(
+    cfg: &Config,
+    flags: &std::collections::HashMap<String, crate::parse::FlagValue>,
+    env: &BTreeMap<String, String>,
+) -> Vec<AgentKeyRow> {
+    let set = |v: &Option<String>| v.as_deref().is_some_and(|s| !s.trim().is_empty());
+    cfg.agents
+        .iter()
+        .filter(|(_, b)| set(&b.api_key) || set(&b.profile))
+        .map(|(agent, _)| {
+            let resolved = resolve_launch_key(flags, env, Some(cfg), agent);
+            AgentKeyRow {
+                agent: agent.clone(),
+                key_masked: mask_api_key(resolved.as_ref().map(|(k, _)| k.as_str())),
+                source: resolved.map(|(_, source)| source),
+            }
+        })
+        .collect()
+}
 
 /// What the status view shows. Model tier mappings stay in `config`; they are
 /// not part of this summary.
@@ -47,6 +87,8 @@ pub(crate) struct StatusView {
     pub key_masked: String,
     pub default_model: String,
     pub default_agent: Option<String>,
+    /// Agents with their own key or account, and the key each launches with.
+    pub agents: Vec<AgentKeyRow>,
     pub config_path: String,
     pub base_url: String,
 }
@@ -91,6 +133,12 @@ impl StatusView {
             })),
             "default_model": self.default_model,
             "default_agent": self.default_agent,
+            "agents": self.agents.iter().map(|a| serde_json::json!({
+                "agent": a.agent,
+                "key_masked": a.key_masked,
+                "source": a.source.as_ref().map(KeySource::code),
+                "account": a.source.as_ref().and_then(KeySource::account),
+            })).collect::<Vec<_>>(),
             "config_path": self.config_path,
             "base_url": self.base_url,
         });
@@ -155,7 +203,16 @@ impl StatusView {
         }
         key_rows.push(("base url", self.base_url.clone()));
         key_rows.push(("config", self.config_path.clone()));
-        term::label_rows(&[&account, &key_rows])
+        let agent_rows: Vec<(&str, String)> = self
+            .agents
+            .iter()
+            .map(|a| (a.agent.as_str(), a.text()))
+            .collect();
+        if agent_rows.is_empty() {
+            term::label_rows(&[&account, &key_rows])
+        } else {
+            term::label_rows(&[&account, &key_rows, &agent_rows])
+        }
     }
 }
 
@@ -291,6 +348,7 @@ fn build_view(
         key_masked: mask_api_key(Some(&key)),
         default_model: display_model_id(profile.default_model()),
         default_agent: cfg.preferred_agent(get_string_flag(&parsed.flags, "tool").as_deref()),
+        agents: agent_key_rows(&cfg, &parsed.flags, env),
         config_path: path.display().to_string(),
         base_url,
     })

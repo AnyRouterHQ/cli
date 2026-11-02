@@ -4,7 +4,7 @@ use crate::auth::acquire_api_key;
 use crate::config::{write_config, DEFAULT_PROFILE};
 use crate::install::{ensure_tool_installed, Install};
 use crate::key::{
-    load_config_if_present, profile_for_agent, resolve_base_url, resolve_launch_api_key,
+    load_config_if_present, profile_for_agent, resolve_base_url, resolve_launch_key,
     resolve_launch_model,
 };
 use crate::parse::{get_string_flag, ParsedArgs};
@@ -174,8 +174,8 @@ pub(crate) fn launch(
     if is_systemone_model(&guard_model) {
         return Err(chat_model_error(&guard_model, tool_name));
     }
-    let key = if let Some(key) =
-        resolve_launch_api_key(&parsed.flags, env, existing.as_ref(), tool_name)
+    let key = if let Some((key, _)) =
+        resolve_launch_key(&parsed.flags, env, existing.as_ref(), tool_name)
     {
         key
     } else {

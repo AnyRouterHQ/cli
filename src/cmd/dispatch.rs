@@ -480,6 +480,7 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
             "device-code",
             "paste",
             "agent",
+            "clear",
         ],
         "logs" => &[
             "profile", "base-url", "config", "json", "key", "limit", "model", "status",

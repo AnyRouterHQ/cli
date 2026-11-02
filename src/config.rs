@@ -379,6 +379,20 @@ impl Config {
     pub fn prune_empty_agents(&mut self) {
         self.agents.retain(|_, b| !b.is_empty());
     }
+
+    /// Point every agent bound to account `old` at `new`, or unbind it when
+    /// `new` is `None`. Returns the agents it changed.
+    pub fn rebind_agents(&mut self, old: &str, new: Option<&str>) -> Vec<String> {
+        let mut changed = Vec::new();
+        for (id, binding) in &mut self.agents {
+            if binding.profile.as_deref().map(str::trim) == Some(old) {
+                binding.profile = new.map(str::to_string);
+                changed.push(id.clone());
+            }
+        }
+        self.prune_empty_agents();
+        changed
+    }
 }
 
 pub struct DefaultProfileInput {
@@ -1347,6 +1361,45 @@ tools:
             .collect();
         assert_eq!(entries, vec!["config.yaml".to_string()], "{entries:?}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rebind_agents_follows_a_rename_and_drops_a_removed_account() {
+        let mut cfg = parse_config(
+            "\
+active_profile: default
+profiles:
+  default:
+    api_key: sk-ar-v1-default-key-aaaa
+  work:
+    api_key: sk-ar-v1-work-key-bbbb
+agents:
+  claude:
+    profile: work
+  codex:
+    profile: work
+    default_model: openai/gpt-5.5
+  grok:
+    profile: default
+",
+        );
+        assert_eq!(
+            cfg.rebind_agents("work", Some("job")),
+            vec!["claude".to_string(), "codex".to_string()]
+        );
+        assert_eq!(
+            cfg.agent_binding("claude").unwrap().profile.as_deref(),
+            Some("job")
+        );
+        assert_eq!(cfg.rebind_agents("job", None).len(), 2);
+        assert!(cfg.agent_binding("claude").is_none(), "empty binding pruned");
+        let codex = cfg.agent_binding("codex").expect("model binding kept");
+        assert_eq!(codex.profile, None);
+        assert_eq!(codex.default_model.as_deref(), Some("openai/gpt-5.5"));
+        assert_eq!(
+            cfg.agent_binding("grok").unwrap().profile.as_deref(),
+            Some("default")
+        );
     }
 
     #[test]

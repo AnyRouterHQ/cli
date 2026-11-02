@@ -17,6 +17,22 @@ pub fn is_dummy_key(value: &str) -> bool {
         .any(|dummy| trimmed.eq_ignore_ascii_case(dummy))
 }
 
+/// Reject anything that is not a whole AnyRouter API key before it is stored.
+/// The message never repeats the input.
+pub fn validate_api_key(key: &str) -> Result<(), String> {
+    let body = key.strip_prefix("sk-ar-v1-").ok_or(
+        "That is not an AnyRouter API key. Copy the whole key, which starts with sk-ar-v1.",
+    )?;
+    let well_formed = body.len() >= 16
+        && body
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !well_formed || is_dummy_key(key) {
+        return Err("That API key looks cut off or malformed. Copy the whole key and try again.".into());
+    }
+    Ok(())
+}
+
 /// `--key -` reads one line from stdin. A literal `--key sk-...` still works
 /// but lands in argv (`ps`, shell history), so it warns on `warn_to`. Shared by
 /// `auth login` and every other command. Returns the key and whether it came
@@ -92,60 +108,129 @@ pub fn resolve_api_key(
         .map(str::to_string)
 }
 
-/// Profile used when launching `tool`: `--profile` / `ANYROUTER_PROFILE`, then
-/// that agent's bound account, then the session `active_profile`.
+/// Which account `tool` launches with, and whether the agent's own binding
+/// chose it: `--profile` / `ANYROUTER_PROFILE`, then the agent's bound
+/// account, then the session `active_profile`.
+pub fn account_for_agent(
+    config: &Config,
+    flags: &HashMap<String, FlagValue>,
+    env: &BTreeMap<String, String>,
+    tool: &str,
+) -> (String, bool) {
+    let explicit = get_string_flag(flags, "profile")
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            env.get("ANYROUTER_PROFILE")
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        });
+    if let Some(name) = explicit {
+        return (name, false);
+    }
+    if let Some(name) = config
+        .agent_binding(canonical_tool(tool))
+        .and_then(|b| b.profile.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return (name.to_string(), true);
+    }
+    (config.active_profile.clone(), false)
+}
+
+/// Profile used when launching `tool` (see [`account_for_agent`]).
 pub fn profile_for_agent<'a>(
     config: &'a Config,
     flags: &HashMap<String, FlagValue>,
     env: &BTreeMap<String, String>,
     tool: &str,
 ) -> Option<&'a Profile> {
-    if get_string_flag(flags, "profile").is_some()
-        || env
-            .get("ANYROUTER_PROFILE")
-            .map(|s| s.trim())
-            .is_some_and(|s| !s.is_empty())
-    {
-        return get_active_profile(config, get_string_flag(flags, "profile").as_deref(), env).ok();
-    }
-    let id = canonical_tool(tool);
-    if let Some(name) = config
-        .agent_binding(id)
-        .and_then(|b| b.profile.as_deref())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return config.profiles.get(name);
-    }
-    config.profiles.get(&config.active_profile)
+    config
+        .profiles
+        .get(&account_for_agent(config, flags, env, tool).0)
 }
 
-/// Launch key for `tool`. `--key` / `ANYROUTER_API_KEY` win. A per-agent
-/// `api_key` is used as stored — it does not fall back to the default profile.
-pub fn resolve_launch_api_key(
+/// Where a launch key came from, in precedence order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeySource {
+    /// `--key` on the command line.
+    Flag,
+    /// `ANYROUTER_API_KEY`.
+    Env,
+    /// `agents.<id>.api_key`.
+    AgentKey,
+    /// The account bound with `account use <name> --agent <id>`.
+    AgentAccount(String),
+    /// `--profile` / `ANYROUTER_PROFILE`, else the active account.
+    Account(String),
+}
+
+impl KeySource {
+    /// Stable id for `--json`.
+    pub fn code(&self) -> &'static str {
+        match self {
+            KeySource::Flag => "flag",
+            KeySource::Env => "env",
+            KeySource::AgentKey => "agent_key",
+            KeySource::AgentAccount(_) => "agent_account",
+            KeySource::Account(_) => "account",
+        }
+    }
+
+    pub fn account(&self) -> Option<&str> {
+        match self {
+            KeySource::AgentAccount(name) | KeySource::Account(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            KeySource::Flag => "--key".into(),
+            KeySource::Env => "ANYROUTER_API_KEY".into(),
+            KeySource::AgentKey => "agent key".into(),
+            KeySource::AgentAccount(name) => format!("agent account {name}"),
+            KeySource::Account(name) => format!("account {name}"),
+        }
+    }
+}
+
+fn usable_key(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty() && !is_dummy_key(s))
+        .map(str::to_string)
+}
+
+/// Launch key for `tool` and its source: `--key`, then `ANYROUTER_API_KEY`,
+/// then the agent's own `api_key`, then its bound account, then `--profile` /
+/// `ANYROUTER_PROFILE` or the active account. An agent key beats
+/// `--profile` on purpose: it is the narrower, explicit choice for that agent.
+/// It never falls back to the default profile when the stored key is set.
+pub fn resolve_launch_key(
     flags: &HashMap<String, FlagValue>,
     env: &BTreeMap<String, String>,
     config: Option<&Config>,
     tool: &str,
-) -> Option<String> {
-    if let Some(key) = resolve_api_key(flags, env, None) {
-        return Some(key);
+) -> Option<(String, KeySource)> {
+    if let Some(key) = get_string_flag(flags, "key").and_then(|k| usable_key(Some(&k))) {
+        return Some((key, KeySource::Flag));
+    }
+    if let Some(key) = usable_key(env.get("ANYROUTER_API_KEY").map(String::as_str)) {
+        return Some((key, KeySource::Env));
     }
     let cfg = config?;
-    let id = canonical_tool(tool);
-    if let Some(key) = cfg
-        .agent_binding(id)
-        .and_then(|b| b.api_key.as_deref())
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !is_dummy_key(s))
-    {
-        return Some(key.to_string());
+    let binding = cfg.agent_binding(canonical_tool(tool));
+    if let Some(key) = usable_key(binding.and_then(|b| b.api_key.as_deref())) {
+        return Some((key, KeySource::AgentKey));
     }
-    profile_for_agent(cfg, flags, env, tool)
-        .and_then(|p| p.api_key.as_deref())
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !is_dummy_key(s))
-        .map(str::to_string)
+    let (name, bound) = account_for_agent(cfg, flags, env, tool);
+    let key = usable_key(cfg.profiles.get(&name)?.api_key.as_deref())?;
+    let source = if bound {
+        KeySource::AgentAccount(name)
+    } else {
+        KeySource::Account(name)
+    };
+    Some((key, source))
 }
 
 /// Keep `[1m]` / `[500k]` on virtual presets (`anyrouter/auto`, `free`, `byok`, …)
@@ -256,7 +341,16 @@ pub fn mask_api_key(key: Option<&str>) -> String {
         return "<none>".into();
     }
     let prefix_len = if k.starts_with("sk-ar-v1-") { 14 } else { 8 };
-    let prefix: String = k.chars().take(prefix_len.min(k.chars().count())).collect();
+    // Too short to show a prefix and a suffix without showing most of it:
+    // keep only the family marker.
+    if k.chars().count() <= prefix_len + 8 {
+        let marker = ["sk-ar-v1-", "ak_"]
+            .into_iter()
+            .find(|m| k.starts_with(m))
+            .unwrap_or("");
+        return format!("{marker}…");
+    }
+    let prefix: String = k.chars().take(prefix_len).collect();
     let suffix: String = k
         .chars()
         .rev()
@@ -505,22 +599,110 @@ agents:
         )
     }
 
+    fn launch(
+        cfg: &Config,
+        flags: &[(&str, &str)],
+        env: &[(&str, &str)],
+        tool: &str,
+    ) -> Option<(String, KeySource)> {
+        let flags: HashMap<String, FlagValue> = flags
+            .iter()
+            .map(|(k, v)| (k.to_string(), FlagValue::Value(v.to_string())))
+            .collect();
+        let env: BTreeMap<String, String> = env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        resolve_launch_key(&flags, &env, Some(cfg), tool)
+    }
+
     #[test]
-    fn launch_key_uses_agent_key_not_default_profile() {
+    fn launch_key_uses_agent_key_then_agent_account_then_active_account() {
         let cfg = cfg_two_agents();
-        let flags = HashMap::new();
-        let env = BTreeMap::new();
         assert_eq!(
-            resolve_launch_api_key(&flags, &env, Some(&cfg), "claude").as_deref(),
-            Some("sk-ar-v1-claude-key-cccc")
+            launch(&cfg, &[], &[], "claude"),
+            Some(("sk-ar-v1-claude-key-cccc".into(), KeySource::AgentKey))
         );
         assert_eq!(
-            resolve_launch_api_key(&flags, &env, Some(&cfg), "grok").as_deref(),
-            Some("sk-ar-v1-work-key-bbbb")
+            launch(&cfg, &[], &[], "grok"),
+            Some((
+                "sk-ar-v1-work-key-bbbb".into(),
+                KeySource::AgentAccount("work".into())
+            ))
         );
         assert_eq!(
-            resolve_launch_api_key(&flags, &env, Some(&cfg), "codex").as_deref(),
-            Some("sk-ar-v1-default-key-aaaa")
+            launch(&cfg, &[], &[], "codex"),
+            Some((
+                "sk-ar-v1-default-key-aaaa".into(),
+                KeySource::Account("default".into())
+            ))
+        );
+    }
+
+    #[test]
+    fn launch_key_flag_and_env_beat_every_agent_binding() {
+        let cfg = cfg_two_agents();
+        let flag = "sk-ar-v1-from-the-flag-dddd";
+        let env = "sk-ar-v1-from-the-env-eeee";
+        for tool in ["claude", "grok", "codex"] {
+            assert_eq!(
+                launch(&cfg, &[("key", flag)], &[("ANYROUTER_API_KEY", env)], tool),
+                Some((flag.into(), KeySource::Flag))
+            );
+            assert_eq!(
+                launch(&cfg, &[], &[("ANYROUTER_API_KEY", env)], tool),
+                Some((env.into(), KeySource::Env))
+            );
+        }
+    }
+
+    #[test]
+    fn launch_key_explicit_profile_beats_agent_account_but_not_agent_key() {
+        // WHY: `--profile` names an account for this run, so it overrides the
+        // agent's bound account. An agent key is narrower still and wins.
+        let cfg = cfg_two_agents();
+        assert_eq!(
+            launch(&cfg, &[("profile", "default")], &[], "grok"),
+            Some((
+                "sk-ar-v1-default-key-aaaa".into(),
+                KeySource::Account("default".into())
+            ))
+        );
+        assert_eq!(
+            launch(&cfg, &[], &[("ANYROUTER_PROFILE", "work")], "codex"),
+            Some((
+                "sk-ar-v1-work-key-bbbb".into(),
+                KeySource::Account("work".into())
+            ))
+        );
+        assert_eq!(
+            launch(&cfg, &[("profile", "work")], &[], "claude"),
+            Some(("sk-ar-v1-claude-key-cccc".into(), KeySource::AgentKey))
+        );
+    }
+
+    #[test]
+    fn launch_key_skips_a_dummy_agent_key() {
+        let mut cfg = cfg_two_agents();
+        cfg.agent_binding_mut("claude").api_key = Some("sk-ar-v1-test".into());
+        assert_eq!(
+            launch(&cfg, &[], &[], "claude"),
+            Some((
+                "sk-ar-v1-default-key-aaaa".into(),
+                KeySource::Account("default".into())
+            ))
+        );
+    }
+
+    #[test]
+    fn mask_api_key_never_shows_a_short_key_whole() {
+        assert_eq!(mask_api_key(Some("sk-ar-v1-abc")), "sk-ar-v1-…");
+        assert_eq!(mask_api_key(Some("sk-ar-v1-abcdefgh1234")), "sk-ar-v1-…");
+        assert_eq!(mask_api_key(Some("ak_short12345")), "ak_…");
+        assert_eq!(mask_api_key(Some("short-secret")), "…");
+        assert_eq!(
+            mask_api_key(Some("sk-ar-v1-abcdefghijklmnop1234")),
+            "sk-ar-v1-abcde…1234"
         );
     }
 
