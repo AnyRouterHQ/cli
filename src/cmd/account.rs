@@ -8,7 +8,7 @@ use crate::term;
 
 use crate::cmd::dispatch::{config_path, hint};
 use crate::cmd::login::run_login;
-use crate::cmd::models::{flag_agent, save_agent_account};
+use crate::cmd::models::{clear_agent_account, flag_agent, save_agent_account};
 
 pub(crate) fn run_logout(
     parsed: &ParsedArgs,
@@ -112,6 +112,12 @@ pub(crate) fn run_account(
             Ok(0)
         }
         "use" => {
+            if parsed.flag_true("clear") {
+                let agent = flag_agent(parsed).ok_or_else(|| {
+                    hint("--clear needs an agent: {bin} account use --agent <agent> --clear")
+                })?;
+                return clear_agent_account(&path, &agent);
+            }
             let name = parsed
                 .passthrough
                 .get(1)
@@ -170,6 +176,7 @@ pub(crate) fn run_account(
             if cfg.active_profile == old {
                 cfg.active_profile = new.clone();
             }
+            cfg.rebind_agents(&old, Some(&new));
             write_config(&cfg, &path)?;
             println!("{}  {old} → {}", term::ok("Renamed"), term::accent(&new));
             Ok(0)
@@ -192,8 +199,19 @@ pub(crate) fn run_account(
                     format!("Account \"{name}\" was not found."),
                 ));
             }
+            let unbound = cfg.rebind_agents(&name, None);
             write_config(&cfg, &path)?;
             println!("{}  removed {}", term::ok("Removed"), term::accent(&name));
+            if !unbound.is_empty() {
+                println!(
+                    "{}",
+                    term::dim(&format!(
+                        "Unbound {}. An unbound agent uses the active account {}.",
+                        unbound.join(", "),
+                        cfg.active_profile
+                    ))
+                );
+            }
             Ok(0)
         }
         other => Err(hint(&format!(

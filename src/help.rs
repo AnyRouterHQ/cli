@@ -422,11 +422,13 @@ Usage:
   {bin} auth status [flags]
 
 Shows who is signed in (name and email), the account, the masked key and
-the default model. In a terminal it then offers to switch account, change the
-default model, log out or open the dashboard.
+the default model. Agents with their own key or account get one line each:
+the masked key they launch with and where it comes from (agent key, agent
+account, account, ANYROUTER_API_KEY or --key). In a terminal it then offers
+to switch account, change the default model, log out or open the dashboard.
 
 Options:
-  --json       Print as JSON: account, user, key_masked, default_model,
+  --json       Print as JSON: account, user, key_masked, default_model, agents,
                config_path, base_url (identity_error if the lookup failed)
   --profile    Use a named account
   --verbose    Print the full error on stderr when a lookup failed
@@ -440,14 +442,21 @@ const ACCOUNT: &str = "\
 Usage:
   {bin} account list
   {bin} account use <name>
-  {bin} account use <name> --agent <claude|codex|grok|opencode|pi|pool>
+  {bin} account use <name> --agent <agent>
+  {bin} account use --agent <agent> --clear
   {bin} account add [--yes]
   {bin} account rename <old> <new>
   {bin} account remove <name>
 
 Options:
   --yes            Skip confirmations
-  --agent <id>    Bind this account to a coding agent (does not change the session default)
+  --agent <id>     Bind this account to a coding agent (claude, codex, opencode,
+                   grok, pi, ...); does not change the session default
+  --clear          With --agent: drop the binding, so the agent uses the active account
+
+An agent's own key (`{bin} keys set --agent`) wins over its account.
+Renaming an account keeps its agents bound; removing one unbinds them.
+`{bin} auth status` shows the key each agent launches with.
 ";
 
 const MODELS: &str = "\
@@ -528,6 +537,9 @@ Usage:
   {bin} keys list [--json]
   {bin} keys create [name] [--limit USD] [--reset daily|weekly|monthly]
                         [--endpoints chat,embeddings,...] [--expires 30d] [--quiet]
+                        [--agent <agent>]
+  {bin} keys set --agent <agent> -
+  {bin} keys unset --agent <agent>
   {bin} keys show <hash> [--json]
   {bin} keys update <hash> [--limit USD] [--reset ...] [--endpoints ...] [--expires 30d]
                            [--disable|--enable]
@@ -547,6 +559,15 @@ CLI login (`{bin} auth login`) creates a key with full access.
 `keys audit` lists keys that look unused (never used after 7 days, idle 30
 days, or replaced by a newer login on the same device) with the reason. It
 never removes anything; revoke each one yourself.
+
+One key per coding agent: `--agent <agent>` (claude, codex, opencode, grok,
+pi, ...) gives that agent its own key, so its spend, limits and revocation stay
+apart from the rest. `keys create --agent` mints the key in the account that
+agent uses and saves it for that agent (with `--quiet` it still saves, and
+prints only the secret). It refuses while --key or ANYROUTER_API_KEY is set.
+`keys set --agent <agent> -` stores a key you paste on stdin.
+`keys unset --agent <agent>` removes it; the key keeps working until you
+revoke it. `{bin} auth status` shows which key each agent launches with.
 
 A different key on this machine comes from `{bin} login` (a new key named
 `<host> anyr <date>`) or `{bin} login --key -`. After a browser login replaces

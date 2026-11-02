@@ -339,8 +339,10 @@ pub(crate) fn known_agent(name: &str) -> Result<String, String> {
     if KNOWN_AGENTS.iter().any(|(k, _)| *k == id) {
         Ok(id.to_string())
     } else {
+        let known: Vec<&str> = KNOWN_AGENTS.iter().map(|(k, _)| *k).collect();
         Err(format!(
-            "Unknown coding agent \"{name}\". Known: claude, codex, grok, opencode, pi, pool."
+            "Unknown coding agent \"{name}\". Known: {}.",
+            known.join(", ")
         ))
     }
 }
@@ -378,6 +380,33 @@ pub(crate) fn save_agent_account(path: &Path, agent: &str, profile: &str) -> Res
         term::ok("Switched"),
         term::accent(profile)
     );
+    Ok(0)
+}
+
+pub(crate) fn clear_agent_account(path: &Path, agent: &str) -> Result<i32, String> {
+    let agent = known_agent(agent)?;
+    let mut cfg = load_config_if_present(path).ok_or_else(no_key_error)?;
+    if let Some(binding) = cfg.agents.get_mut(&agent) {
+        binding.profile = None;
+    }
+    cfg.prune_empty_agents();
+    write_config(&cfg, path)?;
+    println!(
+        "{}  {agent} uses the active account  {}",
+        term::ok("Cleared"),
+        term::accent(&cfg.active_profile)
+    );
+    if cfg
+        .agent_binding(&agent)
+        .is_some_and(|b| b.api_key.as_deref().is_some_and(|k| !k.trim().is_empty()))
+    {
+        println!(
+            "{}",
+            term::dim(&crate::help::with_bin(&format!(
+                "{agent} still has its own key, which wins. Remove it: {{bin}} keys unset --agent {agent}"
+            )))
+        );
+    }
     Ok(0)
 }
 

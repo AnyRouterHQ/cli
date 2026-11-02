@@ -87,7 +87,9 @@ pub fn subcommands(canonical: &str) -> &'static [&'static str] {
         "auth" => &["login", "logout", "status", "switch", "token"],
         "account" => &["list", "use", "add", "rename", "remove"],
         "models" => &["list", "show", "use"],
-        "keys" => &["list", "create", "show", "update", "audit", "revoke"],
+        "keys" => &[
+            "list", "create", "set", "unset", "show", "update", "audit", "revoke",
+        ],
         "byok" => &["list", "add", "rm", "test", "providers"],
         "presets" => &["list", "show", "create", "edit", "rm"],
         "mcp" => &["url", "add", "connections"],

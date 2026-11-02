@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::config::write_config;
+use crate::config::Config;
 use crate::http::{delete_key, fetch_keys, is_active_key_row};
 use crate::key::{
-    config_for_credential, load_config_if_present, profile_or_default, resolve_api_key,
-    resolve_base_url,
+    account_for_agent, config_for_credential, key_from_flag, load_config_if_present, mask_api_key,
+    profile_or_default, resolve_api_key, resolve_base_url, validate_api_key,
 };
 use crate::parse::{get_string_flag, ParsedArgs};
 use crate::term;
@@ -14,6 +16,7 @@ use crate::api::{get, send, Ctx};
 use crate::cmd::dispatch::{config_path, hint};
 use crate::cmd::key_audit::{last4, revoke_ref, short_ref, suggest_removals};
 use crate::cmd::key_scope::{render_show, scope_fields};
+use crate::cmd::models::{flag_agent, known_agent};
 
 pub(crate) fn keys_credential(
     parsed: &ParsedArgs,
@@ -28,6 +31,50 @@ pub(crate) fn keys_credential(
     let api_key = resolve_api_key(&parsed.flags, env, Some(&profile))
         .ok_or_else(|| hint("No stored credential. Run \"{bin} login\" first."))?;
     Ok((path, cfg, base, api_key))
+}
+
+/// The account a key minted for `agent` lands in, and its stored credential.
+/// `--key` and `ANYROUTER_API_KEY` are refused: they would mint in their own
+/// account, and the env var would keep beating the new key at launch.
+fn agent_mint_credential(
+    parsed: &ParsedArgs,
+    env: &BTreeMap<String, String>,
+    agent: &str,
+) -> Result<(std::path::PathBuf, Config, String, String, String), String> {
+    for (set, what) in [
+        (get_string_flag(&parsed.flags, "key").is_some(), "--key"),
+        (
+            env.get("ANYROUTER_API_KEY")
+                .is_some_and(|k| !k.trim().is_empty() && !crate::key::is_dummy_key(k)),
+            "ANYROUTER_API_KEY",
+        ),
+    ] {
+        if set {
+            return Err(hint(&format!(
+                "{what} is set, so the new key would be minted in that key's account, not {agent}'s, and {what} also beats every agent key at launch. Drop it, or create without --agent: {{bin}} keys create"
+            )));
+        }
+    }
+    let path = config_path(parsed, env);
+    let cfg = load_config_if_present(&path).ok_or_else(crate::key::no_key_error)?;
+    let (account, bound) = account_for_agent(&cfg, &parsed.flags, env, agent);
+    let profile = cfg.profiles.get(&account).ok_or_else(|| {
+        format!(
+            "Account \"{account}\" was not found. See: {} account list",
+            crate::help::invoked_bin()
+        )
+    })?;
+    let cred = resolve_api_key(&parsed.flags, env, Some(profile)).ok_or_else(|| {
+        let whose = if bound { format!(" (bound to {agent})") } else { String::new() };
+        crate::exit::tag(
+            crate::exit::AUTH,
+            hint(&format!(
+                "Account \"{account}\"{whose} has no key. Sign in to it: {{bin}} login --profile {account}"
+            )),
+        )
+    })?;
+    let base = resolve_base_url(&parsed.flags, Some(profile));
+    Ok((path, cfg, base, cred, account))
 }
 
 fn key_ctx(parsed: &ParsedArgs, base: &str, cred: &str) -> Ctx {
@@ -69,12 +116,58 @@ fn resolve_key(
     }
 }
 
-pub(crate) fn default_key_name() -> String {
+pub(crate) fn default_key_name(agent: Option<&str>) -> String {
     let host = std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("HOST"))
         .unwrap_or_else(|_| "device".into());
     let short = host.split('.').next().unwrap_or("device");
-    format!("cli-{short}").chars().take(40).collect()
+    let name = match agent {
+        Some(agent) => format!("cli-{agent}-{short}"),
+        None => format!("cli-{short}"),
+    };
+    name.chars().take(40).collect()
+}
+
+/// `--agent <id>`, checked against the known coding agents.
+fn agent_flag(parsed: &ParsedArgs) -> Result<Option<String>, String> {
+    flag_agent(parsed).map(|a| known_agent(&a)).transpose()
+}
+
+/// Store `key` as `agent`'s own launch key. Returns the key it replaced.
+fn set_agent_key(cfg: &mut Config, agent: &str, key: &str) -> Result<Option<String>, String> {
+    validate_api_key(key)?;
+    Ok(cfg
+        .agent_binding_mut(agent)
+        .api_key
+        .replace(key.to_string()))
+}
+
+/// Drop `agent`'s own launch key. Returns the key it removed.
+fn unset_agent_key(cfg: &mut Config, agent: &str) -> Option<String> {
+    let old = cfg
+        .agents
+        .get_mut(agent)
+        .and_then(|b| b.api_key.take())
+        .filter(|k| !k.trim().is_empty());
+    cfg.prune_empty_agents();
+    old
+}
+
+fn print_agent_key_saved(agent: &str, key: &str, replaced: Option<&str>) {
+    println!(
+        "{}  {agent} key  {}",
+        term::ok("Saved"),
+        mask_api_key(Some(key))
+    );
+    if let Some(old) = replaced.filter(|old| *old != key) {
+        println!(
+            "{}",
+            term::dim(&format!(
+                "Replaced {}. It still works until you revoke it.",
+                mask_api_key(Some(old))
+            ))
+        );
+    }
 }
 
 pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, String> {
@@ -142,13 +235,20 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             Ok(0)
         }
         "create" => {
-            let (path, mut cfg, base, cred) = keys_credential(parsed, env)?;
+            let agent = agent_flag(parsed)?;
+            let (path, mut cfg, base, cred, account) = match &agent {
+                Some(agent) => agent_mint_credential(parsed, env, agent)?,
+                None => {
+                    let (path, cfg, base, cred) = keys_credential(parsed, env)?;
+                    (path, cfg, base, cred, String::new())
+                }
+            };
             let name = parsed
                 .passthrough
                 .get(1)
                 .cloned()
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(default_key_name);
+                .unwrap_or_else(|| default_key_name(agent.as_deref()));
             let mut body = scope_fields(parsed, crate::civil::now_secs())?;
             body.remove("disabled");
             body.insert("name".into(), serde_json::Value::String(name.clone()));
@@ -166,6 +266,31 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                 .filter(|s| !s.is_empty())
                 .ok_or("Create-key response did not include a key.")?
                 .to_string();
+            if let Some(agent) = &agent {
+                // Show the secret before saving: if the save fails, the key
+                // already exists on the server and this is its only copy.
+                if parsed.flag_true("quiet") {
+                    println!("{key}");
+                } else {
+                    println!("Created \"{name}\" in {account}:\n\n  {key}\n\nShown once.");
+                }
+                let bound = cfg.agent_binding(agent).and_then(|b| b.profile.clone());
+                let replaced = cfg.agent_binding_mut(agent).api_key.replace(key.clone());
+                write_config(&cfg, &path)
+                    .map_err(|err| format!("The key above was not saved for {agent}: {err}"))?;
+                if let Some(bound) = bound.filter(|b| *b != account) {
+                    eprintln!(
+                        "{}",
+                        term::dim(&format!(
+                            "{agent} is bound to {bound}, but this key is in {account}. Its own key wins at launch."
+                        ))
+                    );
+                }
+                if !parsed.flag_true("quiet") {
+                    print_agent_key_saved(agent, &key, replaced.as_deref());
+                }
+                return Ok(0);
+            }
             if parsed.flag_true("quiet") {
                 println!("{key}");
                 return Ok(0);
@@ -226,6 +351,58 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             }
             Ok(0)
         }
+        "set" => {
+            let agent = agent_flag(parsed)?
+                .ok_or_else(|| hint("Usage: {bin} keys set --agent <agent> -   (reads the key from stdin)"))?;
+            let raw = parsed
+                .passthrough
+                .get(1)
+                .cloned()
+                .ok_or_else(|| hint("Usage: {bin} keys set --agent <agent> -   (reads the key from stdin)"))?;
+            if raw != "-" {
+                return Err(hint(
+                    "Pass - and paste the key on stdin, so it stays out of your shell history: {bin} keys set --agent <agent> -",
+                ));
+            }
+            if std::io::stdin().is_terminal() {
+                eprint!("Paste the key for {agent}, then press Enter: ");
+            }
+            let (key, _) = key_from_flag("-", &mut std::io::stdin().lock(), &mut std::io::sink())?
+                .ok_or_else(|| hint("Usage: {bin} keys set --agent <agent> -   (reads the key from stdin)"))?;
+            let path = config_path(parsed, env);
+            let mut cfg = load_config_if_present(&path).unwrap_or_default();
+            let replaced = set_agent_key(&mut cfg, &agent, &key)?;
+            write_config(&cfg, &path)?;
+            print_agent_key_saved(&agent, &key, replaced.as_deref());
+            Ok(0)
+        }
+        "unset" => {
+            let agent = agent_flag(parsed)?
+                .ok_or_else(|| hint("Usage: {bin} keys unset --agent <agent>"))?;
+            let path = config_path(parsed, env);
+            let Some(mut cfg) = load_config_if_present(&path) else {
+                println!("{agent} has no key of its own.");
+                return Ok(0);
+            };
+            let Some(old) = unset_agent_key(&mut cfg, &agent) else {
+                println!("{agent} has no key of its own.");
+                return Ok(0);
+            };
+            write_config(&cfg, &path)?;
+            println!(
+                "{}  {agent} key  {}",
+                term::ok("Removed"),
+                mask_api_key(Some(&old))
+            );
+            let last4: String = old.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+            println!(
+                "{}",
+                term::dim(&crate::help::with_bin(&format!(
+                    "{agent} now launches with its account key. The removed key still works until you revoke it: {{bin}} keys revoke {last4}"
+                )))
+            );
+            Ok(0)
+        }
         "use" => Err(hint(
             "This machine cannot fetch another key's secret. Get a fresh key: {bin} login, or paste one copied from the dashboard: {bin} login --key -",
         )),
@@ -265,7 +442,7 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             Ok(0)
         }
         other => Err(crate::cmd::dispatch::hint(&format!(
-            "Unknown keys subcommand \"{other}\". Try: list | create | show | update | audit | revoke"
+            "Unknown keys subcommand \"{other}\". Try: list | create | set | unset | show | update | audit | revoke"
         ))),
     }
 }
