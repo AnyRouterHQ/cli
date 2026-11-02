@@ -23,7 +23,10 @@ pub fn validate_api_key(key: &str) -> Result<(), String> {
     let body = key.strip_prefix("sk-ar-v1-").ok_or(
         "That is not an AnyRouter API key. Copy the whole key, which starts with sk-ar-v1.",
     )?;
-    let well_formed = body.len() >= 16
+    // Real keys carry 48 characters here. The cap and the marker check catch
+    // two keys pasted together.
+    let well_formed = (16..=128).contains(&body.len())
+        && !body.contains("sk-ar-v1")
         && body
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');

@@ -564,7 +564,7 @@ One key per coding agent: `--agent <agent>` (claude, codex, opencode, grok,
 pi, ...) gives that agent its own key, so its spend, limits and revocation stay
 apart from the rest. `keys create --agent` mints the key in the account that
 agent uses and saves it for that agent (with `--quiet` it still saves, and
-prints only the secret). `keys set --agent <agent> -` stores a key you paste
+prints only the secret). It refuses while --key or ANYROUTER_API_KEY is set. `keys set --agent <agent> -` stores a key you paste
 on stdin. `keys unset --agent <agent>` removes it; the key keeps working until
 you revoke it. `{bin} auth status` shows which key each agent launches with.
 

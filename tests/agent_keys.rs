@@ -28,6 +28,15 @@ fn home() -> PathBuf {
 
 /// Run `anyr` against `home` with no ambient key, so only the config decides.
 fn anyr(home: &Path, args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
+    anyr_env(home, args, stdin, &[])
+}
+
+fn anyr_env(
+    home: &Path,
+    args: &[&str],
+    stdin: Option<&str>,
+    envs: &[(&str, &str)],
+) -> (i32, String, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_anyr"))
         .env("ANYROUTER_HOME", home)
         .env("ANYR_NO_UPDATE", "1")
@@ -36,6 +45,7 @@ fn anyr(home: &Path, args: &[&str], stdin: Option<&str>) -> (i32, String, String
         .env_remove("ANYROUTER_API_KEY")
         .env_remove("ANYROUTER_PROFILE")
         .env_remove("ANYROUTER_MANAGEMENT_KEY")
+        .envs(envs.iter().copied())
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -198,6 +208,7 @@ fn set_refuses_a_bad_key_without_echoing_or_saving_it() {
         "ak_managementkey0000000000000000",
         "sk-ar-v1-has space in it 000000000",
         "sk-ar-v1-testkey",
+        &format!("{CLAUDE_KEY}{CODEX_KEY}"),
     ] {
         let (code, out, err) = anyr(&h, &["keys", "set", "--agent", "claude", "-"], Some(bad));
         assert_eq!(code, 1, "{bad}: {out}{err}");
@@ -212,6 +223,8 @@ fn set_refuses_a_bad_key_without_echoing_or_saving_it() {
     assert!(err.contains("Unknown coding agent"), "{err}");
     let (code, _, err) = anyr(&h, &["keys", "set", "-"], Some(CLAUDE_KEY));
     assert_eq!(code, 2, "{err}");
+    let (code, _, err) = anyr(&h, &["keys", "set", "--agent", "claude", CLAUDE_KEY], None);
+    assert_eq!(code, 2, "a key in argv is refused: {err}");
     assert_eq!(config(&h), before, "nothing saved");
 }
 
@@ -296,4 +309,91 @@ fn renaming_or_removing_an_account_keeps_agent_bindings_consistent() {
     let codex = launch_auth(&h, "codex", "OPENAI_API_KEY", &[]);
     assert!(codex.ends_with(last4(DEFAULT_KEY)), "{codex}");
     assert!(!config(&h).contains("job"), "{}", config(&h));
+}
+
+#[test]
+fn create_for_an_agent_refuses_a_key_override_and_sends_nothing() {
+    // WHY: `--key` or ANYROUTER_API_KEY would mint in that key's account, and
+    // the env var would keep beating the new key at every launch.
+    let h = home();
+    ok(&h, &["account", "use", "work", "--agent", "codex"], None);
+    let before = config(&h);
+    let (base, rx) = serve(vec![(
+        201,
+        format!(r#"{{"key":"{MINTED_KEY}","data":{{"hash":"h1"}}}}"#),
+    )]);
+    let (code, _, err) = anyr_env(
+        &h,
+        &["keys", "create", "--agent", "codex", "--base-url", &base],
+        None,
+        &[("ANYROUTER_API_KEY", DEFAULT_KEY)],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("ANYROUTER_API_KEY is set"), "{err}");
+    let (code, _, err) = anyr(
+        &h,
+        &[
+            "keys",
+            "create",
+            "--agent",
+            "codex",
+            "--key",
+            DEFAULT_KEY,
+            "--base-url",
+            &base,
+        ],
+        None,
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--key is set"), "{err}");
+    assert!(
+        matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
+        "no request sent"
+    );
+    assert_eq!(config(&h), before);
+}
+
+#[test]
+fn create_for_an_agent_names_a_bound_account_with_no_key() {
+    let h = home();
+    std::fs::write(
+        h.join("config.yaml"),
+        format!("{}  empty:\n    default_model: auto\n", config(&h)),
+    )
+    .unwrap();
+    ok(&h, &["account", "use", "empty", "--agent", "pi"], None);
+    let (code, _, err) = anyr(&h, &["keys", "create", "--agent", "pi"], None);
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("\"empty\" (bound to pi) has no key"), "{err}");
+}
+
+#[test]
+fn create_for_an_agent_under_another_profile_says_its_key_wins() {
+    let h = home();
+    ok(&h, &["account", "use", "work", "--agent", "codex"], None);
+    let (base, rx) = serve(vec![(
+        201,
+        format!(r#"{{"key":"{MINTED_KEY}","data":{{"hash":"h1"}}}}"#),
+    )]);
+    let (code, out, err) = anyr_env(
+        &h,
+        &[
+            "keys",
+            "create",
+            "--agent",
+            "codex",
+            "--quiet",
+            "--base-url",
+            &base,
+        ],
+        None,
+        &[("ANYROUTER_PROFILE", "default")],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.trim(), MINTED_KEY);
+    assert_eq!(rx.recv().unwrap().auth, format!("Bearer {DEFAULT_KEY}"));
+    assert!(
+        err.contains("bound to work, but this key is in default"),
+        "{err}"
+    );
 }

@@ -21,29 +21,59 @@ pub(crate) fn keys_credential(
     parsed: &ParsedArgs,
     env: &BTreeMap<String, String>,
 ) -> Result<(std::path::PathBuf, crate::config::Config, String, String), String> {
-    keys_credential_for(parsed, env, None)
-}
-
-/// Like [`keys_credential`], but with `agent` it signs in as the account that
-/// agent launches with, so a key minted for it lands in that account.
-fn keys_credential_for(
-    parsed: &ParsedArgs,
-    env: &BTreeMap<String, String>,
-    agent: Option<&str>,
-) -> Result<(std::path::PathBuf, crate::config::Config, String, String), String> {
     let path = config_path(parsed, env);
     let cfg = config_for_credential(&path, &parsed.flags, env)?;
-    let name = match agent {
-        Some(agent) => account_for_agent(&cfg, &parsed.flags, env, agent).0,
-        None => {
-            get_string_flag(&parsed.flags, "profile").unwrap_or_else(|| cfg.active_profile.clone())
-        }
-    };
+    let name =
+        get_string_flag(&parsed.flags, "profile").unwrap_or_else(|| cfg.active_profile.clone());
     let profile = profile_or_default(&cfg, &name, &parsed.flags, env)?;
     let base = resolve_base_url(&parsed.flags, Some(&profile));
     let api_key = resolve_api_key(&parsed.flags, env, Some(&profile))
         .ok_or_else(|| hint("No stored credential. Run \"{bin} login\" first."))?;
     Ok((path, cfg, base, api_key))
+}
+
+/// The account a key minted for `agent` lands in, and its stored credential.
+/// `--key` and `ANYROUTER_API_KEY` are refused: they would mint in their own
+/// account, and the env var would keep beating the new key at launch.
+fn agent_mint_credential(
+    parsed: &ParsedArgs,
+    env: &BTreeMap<String, String>,
+    agent: &str,
+) -> Result<(std::path::PathBuf, Config, String, String, String), String> {
+    for (set, what) in [
+        (get_string_flag(&parsed.flags, "key").is_some(), "--key"),
+        (
+            env.get("ANYROUTER_API_KEY")
+                .is_some_and(|k| !k.trim().is_empty()),
+            "ANYROUTER_API_KEY",
+        ),
+    ] {
+        if set {
+            return Err(hint(&format!(
+                "{what} is set, so the new key would be minted in that key's account, not {agent}'s. Drop it, or create without --agent: {{bin}} keys create"
+            )));
+        }
+    }
+    let path = config_path(parsed, env);
+    let cfg = load_config_if_present(&path).ok_or_else(crate::key::no_key_error)?;
+    let (account, bound) = account_for_agent(&cfg, &parsed.flags, env, agent);
+    let profile = cfg.profiles.get(&account).ok_or_else(|| {
+        format!(
+            "Account \"{account}\" was not found. See: {} account list",
+            crate::help::invoked_bin()
+        )
+    })?;
+    let cred = resolve_api_key(&parsed.flags, env, Some(profile)).ok_or_else(|| {
+        let whose = if bound { format!(" (bound to {agent})") } else { String::new() };
+        crate::exit::tag(
+            crate::exit::AUTH,
+            hint(&format!(
+                "Account \"{account}\"{whose} has no key. Sign in to it: {{bin}} login --profile {account}"
+            )),
+        )
+    })?;
+    let base = resolve_base_url(&parsed.flags, Some(profile));
+    Ok((path, cfg, base, cred, account))
 }
 
 fn key_ctx(parsed: &ParsedArgs, base: &str, cred: &str) -> Ctx {
@@ -205,7 +235,13 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
         }
         "create" => {
             let agent = agent_flag(parsed)?;
-            let (path, mut cfg, base, cred) = keys_credential_for(parsed, env, agent.as_deref())?;
+            let (path, mut cfg, base, cred, account) = match &agent {
+                Some(agent) => agent_mint_credential(parsed, env, agent)?,
+                None => {
+                    let (path, cfg, base, cred) = keys_credential(parsed, env)?;
+                    (path, cfg, base, cred, String::new())
+                }
+            };
             let name = parsed
                 .passthrough
                 .get(1)
@@ -230,13 +266,24 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                 .ok_or("Create-key response did not include a key.")?
                 .to_string();
             if let Some(agent) = &agent {
+                let bound = cfg.agent_binding(agent).and_then(|b| b.profile.clone());
                 let replaced = set_agent_key(&mut cfg, agent, &key)?;
                 write_config(&cfg, &path)?;
+                if let Some(bound) = bound.filter(|b| *b != account) {
+                    eprintln!(
+                        "{}",
+                        term::dim(&format!(
+                            "{agent} is bound to {bound}, but this key is in {account}. Its own key wins at launch."
+                        ))
+                    );
+                }
                 if parsed.flag_true("quiet") {
                     println!("{key}");
                     return Ok(0);
                 }
-                println!("Created \"{name}\":\n\n  {key}\n\nShown once. {agent} now launches with it.");
+                println!(
+                    "Created \"{name}\" in {account}:\n\n  {key}\n\nShown once. {agent} now launches with it."
+                );
                 print_agent_key_saved(agent, &key, replaced.as_deref());
                 return Ok(0);
             }
@@ -308,7 +355,12 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                 .get(1)
                 .cloned()
                 .ok_or_else(|| hint("Usage: {bin} keys set --agent <agent> -   (reads the key from stdin)"))?;
-            let (key, _) = key_from_flag(&raw, &mut std::io::stdin().lock(), &mut std::io::stderr())?
+            if raw != "-" {
+                return Err(hint(
+                    "Pass - and paste the key on stdin, so it stays out of your shell history: {bin} keys set --agent <agent> -",
+                ));
+            }
+            let (key, _) = key_from_flag("-", &mut std::io::stdin().lock(), &mut std::io::sink())?
                 .ok_or_else(|| hint("Usage: {bin} keys set --agent <agent> -   (reads the key from stdin)"))?;
             let path = config_path(parsed, env);
             let mut cfg = load_config_if_present(&path).unwrap_or_default();
