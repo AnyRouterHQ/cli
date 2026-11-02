@@ -1392,7 +1392,10 @@ agents:
             Some("job")
         );
         assert_eq!(cfg.rebind_agents("job", None).len(), 2);
-        assert!(cfg.agent_binding("claude").is_none(), "empty binding pruned");
+        assert!(
+            cfg.agent_binding("claude").is_none(),
+            "empty binding pruned"
+        );
         let codex = cfg.agent_binding("codex").expect("model binding kept");
         assert_eq!(codex.profile, None);
         assert_eq!(codex.default_model.as_deref(), Some("openai/gpt-5.5"));

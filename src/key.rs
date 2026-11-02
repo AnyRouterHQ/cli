@@ -28,7 +28,9 @@ pub fn validate_api_key(key: &str) -> Result<(), String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if !well_formed || is_dummy_key(key) {
-        return Err("That API key looks cut off or malformed. Copy the whole key and try again.".into());
+        return Err(
+            "That API key looks cut off or malformed. Copy the whole key and try again.".into(),
+        );
     }
     Ok(())
 }

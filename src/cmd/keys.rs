@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::config::write_config;
-use crate::http::{delete_key, fetch_keys, is_active_key_row};
 use crate::config::Config;
+use crate::http::{delete_key, fetch_keys, is_active_key_row};
 use crate::key::{
-    account_for_agent, config_for_credential, key_from_flag, load_config_if_present,
-    mask_api_key, profile_or_default, resolve_api_key, resolve_base_url, validate_api_key,
+    account_for_agent, config_for_credential, key_from_flag, load_config_if_present, mask_api_key,
+    profile_or_default, resolve_api_key, resolve_base_url, validate_api_key,
 };
 use crate::parse::{get_string_flag, ParsedArgs};
 use crate::term;
@@ -35,8 +35,9 @@ fn keys_credential_for(
     let cfg = config_for_credential(&path, &parsed.flags, env)?;
     let name = match agent {
         Some(agent) => account_for_agent(&cfg, &parsed.flags, env, agent).0,
-        None => get_string_flag(&parsed.flags, "profile")
-            .unwrap_or_else(|| cfg.active_profile.clone()),
+        None => {
+            get_string_flag(&parsed.flags, "profile").unwrap_or_else(|| cfg.active_profile.clone())
+        }
     };
     let profile = profile_or_default(&cfg, &name, &parsed.flags, env)?;
     let base = resolve_base_url(&parsed.flags, Some(&profile));
@@ -104,7 +105,10 @@ fn agent_flag(parsed: &ParsedArgs) -> Result<Option<String>, String> {
 /// Store `key` as `agent`'s own launch key. Returns the key it replaced.
 fn set_agent_key(cfg: &mut Config, agent: &str, key: &str) -> Result<Option<String>, String> {
     validate_api_key(key)?;
-    Ok(cfg.agent_binding_mut(agent).api_key.replace(key.to_string()))
+    Ok(cfg
+        .agent_binding_mut(agent)
+        .api_key
+        .replace(key.to_string()))
 }
 
 /// Drop `agent`'s own launch key. Returns the key it removed.
