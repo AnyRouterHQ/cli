@@ -1248,7 +1248,9 @@ pub fn fx_connection(
     );
     for row in catalog {
         let id = catalog_model_id(&row.id);
-        if id != selected && !(has(row, "chat") && has(row, "function-calling")) {
+        if id != selected
+            && !(has(row, "chat") && has(row, "function-calling") && row.is_routable())
+        {
             continue;
         }
         if id != selected && metadata.len() >= FX_MAX_MODEL_METADATA && !metadata.contains_key(&id)
@@ -1271,6 +1273,33 @@ pub fn fx_connection(
         "auth": { "type": "bearer", "env": key_env },
         "model_metadata": metadata,
     })
+}
+
+/// The `model_metadata` ids anyr wrote on an earlier launch, read from
+/// `settings.json`. Empty when there is no file or no such entry.
+pub fn fx_listed_models(path: &Path) -> serde_json::Map<String, serde_json::Value> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| {
+            v.pointer(&format!("/providers/{FX_CONNECTION}/model_metadata"))
+                .and_then(|m| m.as_object().cloned())
+        })
+        .unwrap_or_default()
+}
+
+/// Put back the models an earlier launch listed, for a launch whose catalog
+/// failed to load: `connection` would otherwise shrink `/model` to one id.
+/// The selected model keeps the entry `fx_connection` built for it.
+pub fn fx_keep_listed_models(
+    connection: &mut serde_json::Value,
+    previous: serde_json::Map<String, serde_json::Value>,
+) {
+    if let Some(metadata) = connection["model_metadata"].as_object_mut() {
+        for (id, meta) in previous {
+            metadata.entry(id).or_insert(meta);
+        }
+    }
 }
 
 /// `settings` with `providers.anyrouter` set to `connection`, or None when it
@@ -1449,7 +1478,7 @@ pub fn pi_catalog_models(
     }
     for m in catalog {
         let id = catalog_model_id(&m.id);
-        if id.is_empty() || out.iter().any(|x| x.id == id) {
+        if id.is_empty() || !m.is_routable() || out.iter().any(|x| x.id == id) {
             continue;
         }
         out.push(entry(&id));
@@ -2399,6 +2428,71 @@ mod tests {
             max_completion_tokens: max,
             ..Default::default()
         }
+    }
+
+    fn tool_row(id: &str, routable: Option<bool>) -> crate::http::CatalogModel {
+        crate::http::CatalogModel {
+            id: id.into(),
+            capabilities: vec!["chat".into(), "function-calling".into()],
+            routable,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_model_the_gateway_says_is_not_routable_is_left_out_of_every_agent_list() {
+        let rows = [
+            tool_row("a/open", None),
+            tool_row("b/blocked", Some(false)),
+            tool_row("c/ok", Some(true)),
+        ];
+        let fx = fx_connection("https://gw/v1", "K", "a/open", &rows);
+        let ids: Vec<_> = fx["model_metadata"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(ids, vec!["a/open", "c/ok"]);
+        let pi: Vec<_> = pi_catalog_models("a/open", &rows)
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(pi, vec!["a/open", "c/ok"]);
+        // The model the user asked for stays, whatever the gateway says.
+        let asked = fx_connection("https://gw/v1", "K", "b/blocked", &rows);
+        assert!(asked["model_metadata"]["b/blocked"].is_object());
+    }
+
+    #[test]
+    fn keeping_the_listed_models_restores_them_and_never_overwrites_the_selected_entry() {
+        let mut conn = fx_connection("https://gw/v1", "K", "sel/m", &[]);
+        let previous = serde_json::json!({
+            "sel/m": { "supports_tool_use": true, "context_window": 9 },
+            "old/one": { "supports_tool_use": true, "context_window": 1000 },
+            "old/two": { "supports_tool_use": true },
+        });
+        fx_keep_listed_models(&mut conn, previous.as_object().unwrap().clone());
+        let meta = conn["model_metadata"].as_object().unwrap();
+        assert_eq!(meta.len(), 3, "{meta:?}");
+        assert_eq!(meta["old/one"]["context_window"], 1000);
+        assert!(meta["sel/m"].get("context_window").is_none());
+    }
+
+    #[test]
+    fn listed_models_come_from_providers_anyrouter_only() {
+        let dir = std::env::temp_dir().join(format!("anyr-fx-listed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        assert!(fx_listed_models(&path).is_empty(), "no file");
+        std::fs::write(&path, r#"{"providers":{"local":{"model_metadata":{"x":{}}},"anyrouter":{"model_metadata":{"a/b":{}}}}}"#).unwrap();
+        assert_eq!(
+            fx_listed_models(&path).keys().collect::<Vec<_>>(),
+            vec!["a/b"]
+        );
+        std::fs::write(&path, "not json").unwrap();
+        assert!(fx_listed_models(&path).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -461,7 +461,14 @@ pub struct CatalogModel {
     pub pricing: Option<ModelPricing>,
     /// Unix seconds the model joined the catalog.
     pub created: Option<i64>,
+    /// What the gateway says about routing this model for the caller now.
+    /// None when the response has no such field (an older gateway).
+    pub routable: Option<bool>,
 }
+
+/// The `/v1/models` field that says whether the caller can route a model now.
+/// A model with `false` here is not offered by any picker or agent model list.
+pub const ROUTABLE_FIELD: &str = "can_route_now";
 
 /// USD per 1M tokens, as the catalog lists it.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -563,6 +570,7 @@ pub(crate) fn parse_models_body(body: &str) -> Result<Vec<CatalogModel>, String>
                     .unwrap_or_default(),
                 pricing: parse_pricing(&item),
                 created: item.get("created").and_then(|v| v.as_i64()),
+                routable: item.get(ROUTABLE_FIELD).and_then(|v| v.as_bool()),
             })
         })
         .collect())
@@ -626,6 +634,11 @@ pub(crate) fn parse_intelligence_body(body: &str) -> Result<BTreeMap<String, f64
 }
 
 impl CatalogModel {
+    /// False only when the gateway says the caller cannot route this model.
+    pub fn is_routable(&self) -> bool {
+        self.routable != Some(false)
+    }
+
     /// `chat`, `embedding` or `decisions`; launchers only accept `chat`.
     pub fn kind(&self) -> &'static str {
         let has = |c: &str| self.capabilities.iter().any(|x| x == c);
@@ -1082,6 +1095,19 @@ pub fn keys_newest_first(mut keys: Vec<RemoteKey>) -> Vec<RemoteKey> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn can_route_now_false_marks_a_model_not_routable_and_absent_means_routable() {
+        let body = format!(
+            r#"{{"data":[{{"id":"a","{f}":false}},{{"id":"b","{f}":true}},{{"id":"c"}}]}}"#,
+            f = ROUTABLE_FIELD
+        );
+        let rows = parse_models_body(&body).unwrap();
+        assert_eq!(
+            rows.iter().map(|m| m.is_routable()).collect::<Vec<_>>(),
+            vec![false, true, true]
+        );
+    }
+
     #[test]
     fn error_message_prefers_the_server_message() {
         assert_eq!(

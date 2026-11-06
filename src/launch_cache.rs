@@ -26,6 +26,10 @@ const STALE_SECS: u64 = 86_400;
 /// A launch with no copy at all waits at most this long for the catalog.
 #[cfg(feature = "native")]
 const COLD_FETCH: std::time::Duration = std::time::Duration::from_millis(1500);
+/// A launch that writes the model list into the agent's own config waits this
+/// long on a cold cache: a short list written then stays what the user can pick.
+#[cfg(feature = "native")]
+const LIST_FETCH: std::time::Duration = std::time::Duration::from_secs(8);
 
 pub(crate) fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -145,6 +149,9 @@ fn model_row(m: &CatalogModel) -> Value {
     if let Some(created) = m.created {
         row["created"] = json!(created);
     }
+    if let Some(routable) = m.routable {
+        row[crate::http::ROUTABLE_FIELD] = json!(routable);
+    }
     if let Some(p) = &m.pricing {
         row["pricing"] = json!({ "input_per_1m": p.input, "output_per_1m": p.output });
         if let Some(billing) = &p.billing {
@@ -185,6 +192,45 @@ pub(crate) fn catalog_for_launch(
     dry_run: bool,
 ) -> LaunchCatalog {
     catalog_with(dir, base, key, dry_run, now_secs(), &fetch)
+}
+
+/// The catalog for a launch that writes the model list into the agent's own
+/// config (pi, crush, fx). With no usable copy it waits up to `LIST_FETCH`
+/// after calling `wait`, instead of the short cold budget.
+pub(crate) fn catalog_for_list(
+    dir: Option<&Path>,
+    base: &str,
+    key: Option<&str>,
+    dry_run: bool,
+    wait: &dyn Fn(),
+) -> LaunchCatalog {
+    catalog_for_list_with(dir, base, key, dry_run, now_secs(), &fetch_patient, wait)
+}
+
+pub(crate) fn catalog_for_list_with(
+    dir: Option<&Path>,
+    base: &str,
+    key: Option<&str>,
+    dry_run: bool,
+    now: u64,
+    fetch: &'static Fetch,
+    wait: &dyn Fn(),
+) -> LaunchCatalog {
+    let warm = dir.is_some_and(|d| CatalogCache::new(d, base, key).load_value(now).is_some());
+    if !warm && !dry_run {
+        wait();
+    }
+    catalog_with(dir, base, key, dry_run, now, fetch)
+}
+
+#[cfg(feature = "native")]
+fn fetch_patient(base: &str, key: Option<&str>) -> Result<Vec<CatalogModel>, String> {
+    crate::http::fetch_models_timeout(base, key, LIST_FETCH)
+}
+
+#[cfg(not(feature = "native"))]
+fn fetch_patient(base: &str, key: Option<&str>) -> Result<Vec<CatalogModel>, String> {
+    crate::http::fetch_models(base, key)
 }
 
 #[cfg(feature = "native")]
@@ -387,6 +433,7 @@ mod tests {
             capabilities: vec!["tools".into()],
             pricing: Some(pricing()),
             created: Some(1_700_000_000),
+            routable: None,
         }
     }
 
@@ -509,6 +556,98 @@ mod tests {
         assert!(CatalogCache::new(&d, BASE, Some(KEY))
             .load(now_secs())
             .is_some());
+    }
+
+    fn slow_full_list(_: &str, _: Option<&str>) -> Result<Vec<CatalogModel>, String> {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        Ok((0..30)
+            .map(|n| model(&format!("full/m{n}"), 1000))
+            .collect())
+    }
+
+    fn failing(_: &str, _: Option<&str>) -> Result<Vec<CatalogModel>, String> {
+        Err("timed out".into())
+    }
+
+    #[test]
+    fn a_list_launch_on_a_cold_cache_says_it_waits_then_saves_the_full_list() {
+        let d = dir("list-cold");
+        let said = std::cell::Cell::new(0);
+        let launch = catalog_for_list_with(
+            Some(&d),
+            BASE,
+            Some(KEY),
+            false,
+            now_secs(),
+            &slow_full_list,
+            &|| said.set(said.get() + 1),
+        );
+        assert_eq!(said.get(), 1, "one line before the wait");
+        assert_eq!(launch.models.as_deref().map(<[_]>::len), Some(30));
+        assert!(CatalogCache::new(&d, BASE, Some(KEY))
+            .load(now_secs())
+            .is_some_and(|(m, _)| m.len() == 30));
+    }
+
+    #[test]
+    fn a_list_launch_with_a_copy_or_a_dry_run_does_not_announce_a_wait() {
+        let say = || panic!("no wait expected");
+        let d = dir("list-warm");
+        let now = now_secs();
+        CatalogCache::new(&d, BASE, Some(KEY)).save(&[model("cached/m", 1)], now);
+        let warm = catalog_for_list_with(Some(&d), BASE, Some(KEY), false, now, &offline, &say);
+        assert_eq!(ids(&warm.models), vec!["cached/m"]);
+        let dry = catalog_for_list_with(
+            Some(&dir("list-dry")),
+            BASE,
+            Some(KEY),
+            true,
+            now,
+            &offline,
+            &say,
+        );
+        assert!(dry.models.is_none());
+    }
+
+    #[test]
+    fn a_failed_list_fetch_is_none_and_saves_nothing() {
+        let d = dir("list-fail");
+        let launch = catalog_for_list_with(
+            Some(&d),
+            BASE,
+            Some(KEY),
+            false,
+            now_secs(),
+            &failing,
+            &|| {},
+        );
+        assert!(launch.models.is_none());
+        assert!(CatalogCache::new(&d, BASE, Some(KEY))
+            .load(now_secs())
+            .is_none());
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn the_list_budget_outlasts_the_launch_budget() {
+        assert!(LIST_FETCH >= std::time::Duration::from_secs(8));
+        assert!(LIST_FETCH > COLD_FETCH);
+    }
+
+    #[test]
+    fn the_routable_flag_survives_the_cache() {
+        let d = dir("routable");
+        let cache = CatalogCache::new(&d, BASE, Some(KEY));
+        let blocked = CatalogModel {
+            routable: Some(false),
+            ..model("x/blocked", 1)
+        };
+        cache.save(&[blocked, model("x/open", 1)], 1_000);
+        let (models, _) = cache.load(1_001).unwrap();
+        assert_eq!(
+            models.iter().map(|m| m.routable).collect::<Vec<_>>(),
+            vec![Some(false), None]
+        );
     }
 
     #[test]
