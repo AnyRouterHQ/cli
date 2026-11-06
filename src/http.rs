@@ -468,7 +468,7 @@ pub struct CatalogModel {
 
 /// The `/v1/models` field that says whether the caller can route a model now.
 /// A model with `false` here is not offered by any picker or agent model list.
-pub const ROUTABLE_FIELD: &str = "can_route_now";
+pub const ROUTABLE_FIELD: &str = "can_route";
 
 /// USD per 1M tokens, as the catalog lists it.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1096,7 +1096,20 @@ pub fn keys_newest_first(mut keys: Vec<RemoteKey>) -> Vec<RemoteKey> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn can_route_now_false_marks_a_model_not_routable_and_absent_means_routable() {
+    fn the_gateway_field_is_can_route() {
+        assert_eq!(ROUTABLE_FIELD, "can_route");
+        let rows = parse_models_body(
+            r#"{"data":[{"id":"a","can_route":false,"can_route_reason":"needs_key"},{"id":"b","can_route":true}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rows.iter().map(|m| m.is_routable()).collect::<Vec<_>>(),
+            vec![false, true]
+        );
+    }
+
+    #[test]
+    fn can_route_false_marks_a_model_not_routable_and_absent_means_routable() {
         let body = format!(
             r#"{{"data":[{{"id":"a","{f}":false}},{{"id":"b","{f}":true}},{{"id":"c"}}]}}"#,
             f = ROUTABLE_FIELD
