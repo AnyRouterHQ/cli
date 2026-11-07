@@ -937,11 +937,68 @@ pub fn grok_user_home(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
 /// The user's own setup (config, MCP, skills, hooks, memory, history) is
 /// symlinked in from `user_home` (`config.toml` is copied fresh each launch); `auth.json` is not. The user's home is only
 /// read, never written, so a plain `grok` keeps its login.
+pub fn grok_session_summary_model(model: &str) -> String {
+    // #225: grok's session-title request defaults to grok-4.6 on /responses,
+    // which AnyRouter 404s. Use the launch model, or anyrouter/free for auto.
+    let catalog = catalog_model_id(model);
+    if catalog.is_empty() || is_auto_model(&catalog) {
+        "anyrouter/free".to_string()
+    } else {
+        catalog
+    }
+}
+
+/// Set `models.session_summary` in a grok `config.toml` text (#225).
+pub fn grok_config_with_session_summary(text: &str, model_id: &str) -> String {
+    let escaped = model_id.replace('\\', "\\\\").replace('"', "\\\"");
+    let line = format!("session_summary = \"{escaped}\"");
+    let mut out: Vec<String> = Vec::new();
+    let mut in_models = false;
+    let mut replaced = false;
+    let mut inserted = false;
+    for raw in text.lines() {
+        let t = raw.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            if in_models && !inserted {
+                out.push(line.clone());
+                inserted = true;
+            }
+            in_models = t == "[models]";
+            out.push(raw.to_string());
+            continue;
+        }
+        if in_models && !replaced && t.starts_with("session_summary") {
+            out.push(line.clone());
+            replaced = true;
+            inserted = true;
+            continue;
+        }
+        out.push(raw.to_string());
+    }
+    if in_models && !inserted {
+        out.push(line.clone());
+        inserted = true;
+    }
+    if !inserted {
+        if !out.is_empty() {
+            out.push(String::new());
+        }
+        out.push("[models]".to_string());
+        out.push(line);
+    }
+    let mut s = out.join("\n");
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
 pub fn prepare_grok_home(
     env: &mut BTreeMap<String, String>,
     config_path: &Path,
     api_key: &str,
     user_home: Option<&Path>,
+    model: &str,
 ) -> Result<(), String> {
     let dir = grok_home_dir(config_path);
     #[cfg(feature = "native")]
@@ -956,6 +1013,13 @@ pub fn prepare_grok_home(
             link_grok_entries(src, &dir);
             copy_grok_config(src, &dir);
         }
+        // Point session titles at a model AnyRouter serves (#225), in the
+        // AnyRouter-owned copy only — never the user's file.
+        let cfg_path = dir.join("config.toml");
+        let text = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+        let next = grok_config_with_session_summary(&text, &grok_session_summary_model(model));
+        std::fs::write(&cfg_path, next)
+            .map_err(|e| format!("Could not write {}: {e}", cfg_path.display()))?;
     }
     #[cfg(not(feature = "native"))]
     let _ = user_home;
@@ -2211,6 +2275,29 @@ mod tests {
         });
         assert!(env.contains_key("GROK_MODELS_BASE_URL"));
         assert!(tool.model_env.is_none());
+    }
+
+    #[test]
+    fn grok_session_summary_uses_launch_model_not_grok46() {
+        assert_eq!(
+            grok_session_summary_model("stealth/ox-alpha"),
+            "stealth/ox-alpha"
+        );
+        assert_eq!(grok_session_summary_model("auto"), "anyrouter/free");
+        let out = grok_config_with_session_summary(
+            "[models]\ndefault = \"grok-4.7\"\nsession_summary = \"grok-4.6\"\n\n[ui]\n",
+            "stealth/ox-alpha",
+        );
+        assert!(
+            out.contains("session_summary = \"stealth/ox-alpha\""),
+            "{out}"
+        );
+        assert!(!out.contains("grok-4.6"), "{out}");
+        let out2 = grok_config_with_session_summary("[ui]\n", "anyrouter/free");
+        assert!(
+            out2.contains("[models]\nsession_summary = \"anyrouter/free\""),
+            "{out2}"
+        );
     }
 
     #[test]
