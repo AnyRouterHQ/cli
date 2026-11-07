@@ -40,18 +40,57 @@ pub(crate) struct CacheSpot<'a> {
 
 /// The catalog the model resolution already read, or the cached one, so an
 /// agent that writes its own model list (pi, crush) never fetches it twice.
+///
+/// With no cached copy it waits longer than a normal launch and says so on
+/// stderr unless `quiet`. None means the catalog could not be loaded, so the
+/// caller must not write a list as if it were complete.
 fn take_catalog(
     resolved: &mut ResolvedModel,
     spot: &CacheSpot<'_>,
     base: &str,
     key: &str,
+    quiet: bool,
+) -> Option<Vec<crate::http::CatalogModel>> {
+    let models = match resolved.catalog.take() {
+        Some(models) => Some(models),
+        None => {
+            let launch = crate::launch_cache::catalog_for_list(
+                spot.dir,
+                base,
+                Some(key),
+                spot.dry_run,
+                &|| {
+                    if !quiet {
+                        eprintln!("{} loading the model list", term::dim("anyr:"));
+                    }
+                },
+            );
+            resolved.refresh = resolved.refresh.take().or(launch.refresh);
+            launch.models
+        }
+    };
+    models.filter(|m| !m.is_empty())
+}
+
+/// `take_catalog` for an agent that rebuilds its list on every launch: a
+/// failed load leaves only the selected model, and the launch says so.
+fn catalog_or_selected(
+    resolved: &mut ResolvedModel,
+    spot: &CacheSpot<'_>,
+    base: &str,
+    key: &str,
+    quiet: bool,
+    agent: &str,
 ) -> Vec<crate::http::CatalogModel> {
-    if let Some(models) = resolved.catalog.take() {
-        return models;
-    }
-    let launch = crate::launch_cache::catalog_for_launch(spot.dir, base, Some(key), spot.dry_run);
-    resolved.refresh = resolved.refresh.take().or(launch.refresh);
-    launch.models.unwrap_or_default()
+    take_catalog(resolved, spot, base, key, quiet).unwrap_or_else(|| {
+        if !quiet && !spot.dry_run {
+            eprintln!(
+                "{} the model list is unavailable; {agent} lists only the selected model.",
+                term::dim("anyr:")
+            );
+        }
+        Vec::new()
+    })
 }
 
 /// Run `a` and `b` at the same time where threads exist.
@@ -207,6 +246,7 @@ pub(crate) fn launch(
         &resolve_launch_model(&parsed.flags, existing.as_ref(), &profile, tool_name),
         &mut routing,
     );
+    let quiet = term::machine_output(parsed, env);
     let spot = CacheSpot {
         dir: path.parent(),
         dry_run: parsed.flag_true("dry-run"),
@@ -251,7 +291,7 @@ pub(crate) fn launch(
     // An `anyr` the agent runs itself must not update or print mid-session.
     env_map.insert(crate::autoupdate::ENV_LAUNCHER_CHILD.into(), "1".into());
     if tool_name == "pi" {
-        let catalog = take_catalog(&mut resolved, &spot, &base, &key);
+        let catalog = catalog_or_selected(&mut resolved, &spot, &base, &key, quiet, "pi");
         prepare_pi_wrapper(&mut env_map, &path, &profile, &tool, &model, &catalog)?;
     }
     if tool_name == "grok" {
@@ -288,7 +328,7 @@ pub(crate) fn launch(
     );
     if tool_name == "crush" {
         let catalog = if catalog_lookup_enabled(env) {
-            take_catalog(&mut resolved, &spot, &base, &key)
+            catalog_or_selected(&mut resolved, &spot, &base, &key, quiet, "crush")
         } else {
             Vec::new()
         };
@@ -318,17 +358,30 @@ pub(crate) fn launch(
     let fx_settings = if tool_name == "fx" {
         let settings = fx_settings_path(&|k| env.get(k).cloned())
             .ok_or("fx keeps its settings in $HOME/.fx; set HOME.")?;
-        let catalog = if catalog_lookup_enabled(env) {
-            take_catalog(&mut resolved, &spot, &base, &key)
+        let loaded = if catalog_lookup_enabled(env) {
+            take_catalog(&mut resolved, &spot, &base, &key, quiet)
         } else {
-            Vec::new()
+            Some(Vec::new())
         };
-        let connection = fx_connection(
+        let mut connection = fx_connection(
             &tool_base_url(&profile, &tool),
             &tool.auth_env,
             &model,
-            &catalog,
+            loaded.as_deref().unwrap_or_default(),
         );
+        if loaded.is_none() {
+            // Keep what an earlier launch listed rather than shrink `/model`.
+            let previous = crate::spawn::fx_listed_models(&settings);
+            if !quiet && !spot.dry_run {
+                let from = if previous.is_empty() {
+                    "the model list is unavailable; fx lists only the selected model."
+                } else {
+                    "the model list is unavailable; fx keeps the list from the last launch."
+                };
+                eprintln!("{} {from}", term::dim("anyr:"));
+            }
+            crate::spawn::fx_keep_listed_models(&mut connection, previous);
+        }
         Some((settings, connection))
     } else {
         None

@@ -53,9 +53,10 @@ impl PickerCatalog {
     pub(crate) fn new(
         dir: Option<&Path>,
         base: &str,
-        models: Vec<CatalogModel>,
+        mut models: Vec<CatalogModel>,
         env: &BTreeMap<String, String>,
     ) -> Self {
+        models.retain(CatalogModel::is_routable);
         let smart = if catalog_lookup_enabled(env) {
             scores_with(dir, base, now_secs(), &fetch_intelligence)
         } else {
@@ -74,9 +75,10 @@ impl PickerCatalog {
         fetch: &'static Fetch,
         scores: &'static ScoresFetch,
     ) -> Self {
-        let models = catalog_with(dir, base, key, false, now, fetch)
+        let mut models = catalog_with(dir, base, key, false, now, fetch)
             .models
             .unwrap_or_default();
+        models.retain(CatalogModel::is_routable);
         Self {
             models,
             smart: scores_with(dir, base, now, scores),
@@ -708,6 +710,29 @@ impl RoutingField {
 mod picker_catalog_tests {
     use super::*;
     use crate::http::CatalogModel;
+
+    #[test]
+    fn the_picker_does_not_offer_a_model_the_caller_cannot_route() {
+        let blocked = CatalogModel {
+            routable: Some(false),
+            ..cm("x/blocked", None)
+        };
+        let env = BTreeMap::from([("ANYR_NO_CATALOG".to_string(), "1".to_string())]);
+        let picker = PickerCatalog::new(
+            None,
+            "https://gw.test/api",
+            vec![blocked, cm("x/open", None)],
+            &env,
+        );
+        assert_eq!(
+            picker
+                .models
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["x/open"]
+        );
+    }
 
     fn cm(id: &str, context_length: Option<i64>) -> CatalogModel {
         CatalogModel {
