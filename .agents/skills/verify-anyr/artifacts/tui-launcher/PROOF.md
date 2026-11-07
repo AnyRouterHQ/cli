@@ -2,27 +2,27 @@
 
 Feature: `tui-launcher`
 Entry points driven: `anyr menu --dump-tui`, empty-agents dump, `anyr config --dump-tui`, `anyr claude --dry-run --yes`, PTY `anyr menu`
-Harness: `.cursor/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `pty`, `cleanup`)
+Harness: `.agents/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `pty`, `cleanup`)
 Binary: `target/debug/anyr` from this checkout (`0.1.11`)
 Isolated home: `/tmp/anyr-verify-20260903-060828-7216/home` (removed by cleanup)
 
 ## Commands
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr launch
-.cursor/skills/verify-anyr/control-anyr doctor
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/tui-launcher/menu-dump.txt -- menu --dump-tui
+.agents/skills/verify-anyr/control-anyr launch
+.agents/skills/verify-anyr/control-anyr doctor
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/tui-launcher/menu-dump.txt -- menu --dump-tui
 # empty-agents: helper always exports ANYR_AGENTS=claude,codex; drive the
 # isolated binary directly with ANYR_AGENTS=none
 ANYR_AGENTS=none ANYROUTER_HOME=… "$BIN" menu --dump-tui > artifacts/tui-launcher/menu-empty.txt
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/tui-launcher/config-dump.txt -- config --dump-tui
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/tui-launcher/claude-dry-run.txt -- claude --dry-run --yes --key sk-ar-v1-fixture-key-0001
-.cursor/skills/verify-anyr/control-anyr pty start -- menu
-.cursor/skills/verify-anyr/control-anyr pty capture --path artifacts/tui-launcher/pane.txt
-.cursor/skills/verify-anyr/control-anyr pty send Down
-.cursor/skills/verify-anyr/control-anyr pty capture --path artifacts/tui-launcher/pane-focus-codex.txt
-.cursor/skills/verify-anyr/control-anyr pty send Escape
-.cursor/skills/verify-anyr/control-anyr cleanup
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/tui-launcher/config-dump.txt -- config --dump-tui
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/tui-launcher/claude-dry-run.txt -- claude --dry-run --yes --key sk-ar-v1-fixture-key-0001
+.agents/skills/verify-anyr/control-anyr pty start -- menu
+.agents/skills/verify-anyr/control-anyr pty capture --path artifacts/tui-launcher/pane.txt
+.agents/skills/verify-anyr/control-anyr pty send Down
+.agents/skills/verify-anyr/control-anyr pty capture --path artifacts/tui-launcher/pane-focus-codex.txt
+.agents/skills/verify-anyr/control-anyr pty send Escape
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
 ## Results

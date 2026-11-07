@@ -20,8 +20,8 @@ Do **not** run `anyr claude`, `anyr codex`, or any other agent launch without `-
 From the repo root:
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr launch
-.cursor/skills/verify-anyr/control-anyr doctor
+.agents/skills/verify-anyr/control-anyr launch
+.agents/skills/verify-anyr/control-anyr doctor
 ```
 
 Launch is ready when it prints `ready: anyr --help is examples-first` and doctor prints only `ok` lines.
@@ -30,23 +30,23 @@ What launch does:
 
 1. `cargo build --locked --bin anyr` (debug binary at `target/debug/anyr`). Needs a recent stable Rust — CI uses `dtolnay/rust-toolchain@stable`. rustc 1.83 cannot parse crates in this lockfile (`edition2024`).
 2. Creates `$TMPDIR/anyr-verify-$RUN_ID/` with disposable `ANYROUTER_HOME=$WORKDIR/home`.
-3. Copies `.cursor/skills/verify-anyr/seed-config.yaml` to `$ANYROUTER_HOME/config.yaml` (fixture keys, `auto_update: false`, profiles `default` and `work`).
+3. Copies `.agents/skills/verify-anyr/seed-config.yaml` to `$ANYROUTER_HOME/config.yaml` (fixture keys, `auto_update: false`, profiles `default` and `work`).
 4. Sets `ANYR_NO_UPDATE=1`, `ANYR_NO_CATALOG=1`, `ANYR_AGENTS=claude,codex`, `ANYR_GRAPHICS=off`, and unsets `ANYROUTER_API_KEY`.
 
 Teardown:
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr cleanup
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
-Cleanup deletes the tmux session this run started (if any) and the isolated workdir. It does not delete `.cursor/skills/verify-anyr/artifacts/`.
+Cleanup deletes the tmux session this run started (if any) and the isolated workdir. It does not delete `.agents/skills/verify-anyr/artifacts/`.
 
 ## Doctor
 
 Run before driving, and again whenever output looks like the operator's real config leaked in:
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr doctor
+.agents/skills/verify-anyr/control-anyr doctor
 ```
 
 Doctor must report:
@@ -66,8 +66,8 @@ Any `FAIL` line means do not drive.
 Inspect paths with:
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr paths
-.cursor/skills/verify-anyr/control-anyr path CONFIG_FILE
+.agents/skills/verify-anyr/control-anyr paths
+.agents/skills/verify-anyr/control-anyr path CONFIG_FILE
 ```
 
 `paths` prints shell-quoted `KEY=value` lines (`eval "$(... paths)"` is safe).
@@ -77,8 +77,8 @@ Inspect paths with:
 Prefer the in-repo suite first, then the real binary:
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr test
-.cursor/skills/verify-anyr/control-anyr test -- --test cli help_lists_login_claude_account_and_spawn_targets
+.agents/skills/verify-anyr/control-anyr test
+.agents/skills/verify-anyr/control-anyr test -- --test cli help_lists_login_claude_account_and_spawn_targets
 ```
 
 `tests/cli.rs` already covers help, onboard, `--dry-run` spawn, `--dump-tui`, account switch, logout, and upgrade fixtures. A passing test is not a substitute for driving the mapped user path when the claim is user-visible CLI behavior.
@@ -86,11 +86,11 @@ Prefer the in-repo suite first, then the real binary:
 Non-interactive commands go through the helper so they inherit the isolated env:
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr cli -- --help
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/help.txt -- --help
+.agents/skills/verify-anyr/control-anyr cli -- --help
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/help.txt -- --help
 ```
 
-`cli --` is followed by arguments to `anyr` (no extra `anyr` token). Relative `--out` paths resolve from `.cursor/skills/verify-anyr/`. The helper also writes `$out.err` and `$out.exit`.
+`cli --` is followed by arguments to `anyr` (no extra `anyr` token). Relative `--out` paths resolve from `.agents/skills/verify-anyr/`. The helper also writes `$out.err` and `$out.exit`.
 
 Stable handles. Match these strings, not column layout or ANSI color.
 
@@ -114,23 +114,23 @@ Stable handles. Match these strings, not column layout or ANSI color.
 Interactive TUI (only when dump is not enough):
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr pty start -- menu
-.cursor/skills/verify-anyr/control-anyr pty send --literal 'q'
-.cursor/skills/verify-anyr/control-anyr pty capture --path artifacts/tui-launcher/pane.txt
-.cursor/skills/verify-anyr/control-anyr pty stop
+.agents/skills/verify-anyr/control-anyr pty start -- menu
+.agents/skills/verify-anyr/control-anyr pty send --literal 'q'
+.agents/skills/verify-anyr/control-anyr pty capture --path artifacts/tui-launcher/pane.txt
+.agents/skills/verify-anyr/control-anyr pty stop
 ```
 
 Keys on the HUD: ↑↓ / j k move · ↵ select · `q` / esc quit. First row is Launch claude (signs in and installs if needed). Settings (`anyr config --pick`): ↑↓ / j k, ↵ edit, `x` reset row, `q` / esc close. One-shot PTY without tmux:
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr pty run --wait 'CORE COMMANDS' --out artifacts/help-and-version/help-pty.txt -- --help
+.agents/skills/verify-anyr/control-anyr pty run --wait 'CORE COMMANDS' --out artifacts/help-and-version/help-pty.txt -- --help
 ```
 
-That invokes `.cursor/skills/verify-anyr/helpers/pty-anyr.py`.
+That invokes `.agents/skills/verify-anyr/helpers/pty-anyr.py`.
 
 ## Evidence
 
-Proof artifacts go under `.cursor/skills/verify-anyr/artifacts/<feature-id>/`. Cleanup must not delete that tree.
+Proof artifacts go under `.agents/skills/verify-anyr/artifacts/<feature-id>/`. Cleanup must not delete that tree.
 
 Standards:
 
@@ -147,8 +147,8 @@ Standards:
 ## Cleanup
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr pty stop   # if a PTY was started
-.cursor/skills/verify-anyr/control-anyr cleanup
+.agents/skills/verify-anyr/control-anyr pty stop   # if a PTY was started
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
 Cleanup kills tmux session `anyr-verify` (the session this run created) and `rm -rf` on the run's `anyr-verify-*` workdir only. It never `pkill anyr` and never deletes `artifacts/`.
@@ -158,14 +158,14 @@ Cleanup kills tmux session `anyr-verify` (the session this run created) and `rm 
 `control-anyr` is executable. Invoke it with a path from the repo root, or `cd` into the skill directory.
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr launch
-.cursor/skills/verify-anyr/control-anyr doctor
-.cursor/skills/verify-anyr/control-anyr test -- --test cli help_lists_login_claude_account_and_spawn_targets
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/help.txt -- --help
-.cursor/skills/verify-anyr/control-anyr path CONFIG_FILE
-.cursor/skills/verify-anyr/control-anyr paths
-.cursor/skills/verify-anyr/control-anyr pty run --wait 'CORE COMMANDS' -- --help
-.cursor/skills/verify-anyr/control-anyr cleanup
+.agents/skills/verify-anyr/control-anyr launch
+.agents/skills/verify-anyr/control-anyr doctor
+.agents/skills/verify-anyr/control-anyr test -- --test cli help_lists_login_claude_account_and_spawn_targets
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/help.txt -- --help
+.agents/skills/verify-anyr/control-anyr path CONFIG_FILE
+.agents/skills/verify-anyr/control-anyr paths
+.agents/skills/verify-anyr/control-anyr pty run --wait 'CORE COMMANDS' -- --help
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
 `helpers/pty-anyr.py` is executable. `control-anyr pty run` is the supported invocation; do not reverse-engineer flags from the script unless that wrapper is missing.

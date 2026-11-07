@@ -2,21 +2,21 @@
 
 Feature: `model-picker`
 Entry points driven: `anyr models --dump-tui`, `anyr models use anyrouter/auto`, `anyr claude --dry-run --yes --model stealth/ox-alpha[1m] --yolo`, `anyr claude --dry-run --yes` after pinning auto, `anyr menu --dump-tui`
-Harness: `.cursor/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `cleanup`)
+Harness: `.agents/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `cleanup`)
 Binary: `target/debug/anyr` from this checkout (`0.1.11`)
 Isolated home: `/tmp/anyr-verify-20260903-060433-6302/home` (removed by cleanup)
 
 ## Commands
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr launch
-.cursor/skills/verify-anyr/control-anyr doctor
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/dump.txt -- models --dump-tui
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/use-auto.txt -- models use anyrouter/auto
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/launch-auto.txt -- claude --dry-run --yes --key sk-ar-v1-fixture-key-0001
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/ox-alpha-yolo.txt -- claude --dry-run --yes --key sk-ar-v1-fixture-key-0001 --model 'stealth/ox-alpha[1m]' --yolo
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/menu-after.txt -- menu --dump-tui
-.cursor/skills/verify-anyr/control-anyr cleanup
+.agents/skills/verify-anyr/control-anyr launch
+.agents/skills/verify-anyr/control-anyr doctor
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/dump.txt -- models --dump-tui
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/use-auto.txt -- models use anyrouter/auto
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/launch-auto.txt -- claude --dry-run --yes --key sk-ar-v1-fixture-key-0001
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/ox-alpha-yolo.txt -- claude --dry-run --yes --key sk-ar-v1-fixture-key-0001 --model 'stealth/ox-alpha[1m]' --yolo
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/model-picker/menu-after.txt -- menu --dump-tui
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
 ## Results
