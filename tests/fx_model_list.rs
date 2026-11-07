@@ -105,10 +105,19 @@ impl Run {
 /// `anyr fx` against `base` with a fresh ANYROUTER_HOME (so no catalog cache),
 /// on `home`, with a fake fx that exits at once.
 fn launch_fx(dir: &Path, home: &Path, base: &str) -> Run {
-    use std::os::unix::fs::PermissionsExt;
+    #[cfg(windows)]
+    let fake = dir.join("fake-fx.cmd");
+    #[cfg(not(windows))]
     let fake = dir.join("fake-fx");
+    #[cfg(windows)]
+    std::fs::write(&fake, "@echo off\r\necho 0.0.14\r\n").unwrap();
+    #[cfg(not(windows))]
     std::fs::write(&fake, "#!/bin/sh\necho 0.0.14\n").unwrap();
-    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let out = Command::new(env!("CARGO_BIN_EXE_anyr"))
         .env("ANYR_NO_UPDATE", "1")
         .env("NO_COLOR", "1")
