@@ -350,3 +350,37 @@ jobs:
             --target "${GITHUB_SHA}" \
             --title "${TAG}" \
             --notes-file notes.md
+
+  # The installer and `anyr update` scrape github.com/releases. A repo
+  # transfer once made both find zero tags, and nothing in CI noticed. This
+  # runs the committed setup.sh against the live release just published.
+  install-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [beta]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install the beta with setup.sh and check the version
+        run: |
+          set -euo pipefail
+          WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
+          export ANYR_BIN_DIR="$RUNNER_TEMP/bin" HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          bash setup.sh --channel beta
+          GOT="$("$ANYR_BIN_DIR/anyr" --version)"
+          echo "want ${WANT}, got ${GOT}"
+          case "$GOT" in "${WANT}"*) ;; *) echo "installed version is not the one just published"; exit 1;; esac
+
+      - name: anyr update --check finds the same release
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/home" ANYR_NO_UPDATE=
+          WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
+          OUT="$("$RUNNER_TEMP/bin/anyr" update --check --beta)"
+          echo "$OUT"
+          echo "$OUT" | grep -q "latest:  ${WANT}"
