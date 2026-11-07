@@ -308,6 +308,8 @@ pub struct Config {
     pub last_tool: Option<String>,
     /// `None` means default on. Explicit `false` disables background auto-update.
     pub auto_update: Option<bool>,
+    /// `None` means default on. Explicit `false` stops the anonymous install ping.
+    pub telemetry: Option<bool>,
     /// Upgrade channel: `stable` (default) or `beta`. Not shown in `ar config`.
     pub channel: Option<String>,
     /// `mcp.auto`: `None` follows the workspace setting; `false` never wires the
@@ -325,6 +327,7 @@ impl Default for Config {
             active_profile: DEFAULT_PROFILE.into(),
             last_tool: None,
             auto_update: None,
+            telemetry: None,
             channel: None,
             mcp_auto: None,
             profiles: BTreeMap::new(),
@@ -729,6 +732,9 @@ pub fn parse_config(source: &str) -> Config {
     if let Some(v) = nested.or_else(|| root.get("auto_update")) {
         config.auto_update = yaml_bool(v);
     }
+    if let Some(v) = root.get("telemetry") {
+        config.telemetry = yaml_bool(v);
+    }
     if let Some(v) = root
         .get("mcp")
         .and_then(|v| v.as_map())
@@ -790,6 +796,9 @@ pub fn serialize_config(config: &Config) -> String {
     if let Some(v) = config.auto_update {
         lines.push("update:".into());
         lines.push(format!("  auto: {v}"));
+    }
+    if let Some(v) = config.telemetry {
+        lines.push(format!("telemetry: {v}"));
     }
     if let Some(ch) = &config.channel {
         lines.push(format!("channel: {}", yaml_scalar(ch)));
@@ -1232,6 +1241,19 @@ tools:
         let again = parse_config(&serialize_config(&off));
         assert_eq!(again.mcp_auto, Some(false));
         assert_eq!(again.profiles["default"].api_key.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn telemetry_opt_out_survives_every_config_rewrite() {
+        let missing =
+            parse_config("active_profile: default\nprofiles:\n  default:\n    api_key: x\n");
+        assert_eq!(missing.telemetry, None);
+        assert!(!serialize_config(&missing).contains("telemetry:"));
+        let off = parse_config(
+            "active_profile: default\ntelemetry: false\nprofiles:\n  default:\n    api_key: x\n",
+        );
+        assert_eq!(off.telemetry, Some(false));
+        assert_eq!(parse_config(&serialize_config(&off)).telemetry, Some(false));
     }
 
     #[test]

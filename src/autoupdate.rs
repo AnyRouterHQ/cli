@@ -485,6 +485,7 @@ fn note(line: &str) {
 /// hint once, and maybe start a detached check. Never touches the network.
 #[cfg(feature = "native")]
 pub fn on_startup(command: &str, parsed: &ParsedArgs, env: &BTreeMap<String, String>) {
+    crate::telemetry::on_startup(env);
     if skip_reason(command, parsed, env, RunContext::detect()).is_some() {
         return;
     }

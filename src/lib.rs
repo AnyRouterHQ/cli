@@ -30,6 +30,7 @@ pub mod relay;
 pub mod schema;
 pub mod spawn;
 pub mod spinner;
+pub mod telemetry;
 pub mod term;
 #[cfg(feature = "native")]
 pub mod tui;

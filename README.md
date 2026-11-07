@@ -634,6 +634,29 @@ keys of `anyr config --json` moved to `launcher.claude.haiku`, `.sonnet` and
 or runs `anyr config get launcher.claude.opus`, which prints only a value you
 set yourself.
 
+## Telemetry
+
+`anyr` sends one anonymous ping the first time it runs and again after each
+update, so we can count installs and versions. It holds a random install id,
+the `anyr` version, the OS and the CPU architecture. It never holds your key,
+paths, hostname, IP address or prompts, and PostHog is told not to build a
+person profile or look up a location. The exact payload is built in
+[`src/telemetry.rs`](src/telemetry.rs) and checked by `tests/telemetry.rs`.
+
+Turn it off with any one of:
+
+```bash
+export ANYR_NO_TELEMETRY=1   # or DO_NOT_TRACK=1
+```
+
+```yaml
+# ~/.anyrouter/config.yaml
+telemetry: false
+```
+
+It is also off in CI, in `cargo` builds, and while `ANYR_NO_UPDATE` is set.
+While it is off nothing is written, not even the install id.
+
 ## Documentation
 
 [anyrouter.dev/cli](https://anyrouter.dev/cli) covers install and usage.
