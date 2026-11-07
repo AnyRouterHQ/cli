@@ -214,6 +214,28 @@ fn live_real_agents_answer_through_anyr() {
         return;
     };
     let prompt = "Reply with exactly the single word: pong";
+    // Chosen from the live free list, never a fixed id: a model can move to
+    // BYOK-only (poolside/laguna-s-2.1 did) and fail every agent at once.
+    let (_, listed, _) = anyr(
+        &temp_home("agent-models"),
+        &key,
+        &["models", "--free", "--json"],
+    );
+    let free: Vec<String> = serde_json::from_str::<Value>(&listed)
+        .ok()
+        .map(|v| {
+            v["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|m| m["id"].as_str())
+                .filter(|id| !id.starts_with("anyrouter/") && !id.starts_with("apple/"))
+                .take(2)
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(!free.is_empty(), "no free model listed:\n{listed}");
     let mut failures = Vec::new();
     for entry in list.split(';').map(str::trim).filter(|e| !e.is_empty()) {
         let mut parts = entry.splitn(3, '=');
@@ -231,8 +253,8 @@ fn live_real_agents_answer_through_anyr() {
         let path_var = format!("ANYROUTER_{}_PATH", tool.to_ascii_uppercase());
         let mut last = String::new();
         let mut ok = false;
-        // One retry: a free upstream can drop a single request.
-        for _ in 0..2 {
+        // One retry on the next free model: a free upstream can drop a request.
+        for model in free.iter().cycle().take(2) {
             let started = std::time::Instant::now();
             let out = run_with_deadline(
                 Command::new(env!("CARGO_BIN_EXE_anyr"))
@@ -248,7 +270,7 @@ fn live_real_agents_answer_through_anyr() {
                     .env("ANYROUTER_API_KEY", &key)
                     .env(&path_var, path)
                     .env_remove("ANYROUTER_MANAGEMENT_KEY")
-                    .args([tool, "--yes", "--model", "poolside/laguna-s-2.1"])
+                    .args([tool, "--yes", "--model", model])
                     .args(&tail),
                 std::time::Duration::from_secs(180),
             );
