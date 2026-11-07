@@ -4,7 +4,7 @@ This directory is the maintained source for verifying user-facing `anyr` CLI beh
 
 ## Baseline preconditions
 
-- Run `.cursor/skills/verify-anyr/control-anyr launch` then `doctor`.
+- Run `.agents/skills/verify-anyr/control-anyr launch` then `doctor`.
 - Isolated home is `control-anyr path ANYROUTER_HOME`. Never use `~/.anyrouter`.
 - Seed config is `control-anyr path CONFIG_FILE` with profiles `default` and `work` and fixture keys (not live credentials).
 - `ANYR_NO_UPDATE=1`, `ANYR_NO_CATALOG=1`, `ANYR_AGENTS=claude,codex`.

@@ -2,7 +2,7 @@
 
 Feature: `update-progress`
 Entry points driven: `anyr update` (fixture, non-TTY), `anyr update --check`, `anyr update` on a PTY
-Harness: `.cursor/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `pty run`, `test`, `cleanup`)
+Harness: `.agents/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `pty run`, `test`, `cleanup`)
 Binary: `target/debug/anyr` from this checkout (`0.1.11`)
 Isolated home: `/tmp/anyr-verify-20260903-060715-6103/home` (removed by cleanup)
 Releases: `tests/fixtures/releases.json` via `ANYR_RELEASES_JSON` (offline)
@@ -10,17 +10,17 @@ Releases: `tests/fixtures/releases.json` via `ANYR_RELEASES_JSON` (offline)
 ## Commands
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr launch
-.cursor/skills/verify-anyr/control-anyr doctor
-ANYR_RELEASES_JSON="$(.cursor/skills/verify-anyr/control-anyr path RELEASES_FIXTURE)"
+.agents/skills/verify-anyr/control-anyr launch
+.agents/skills/verify-anyr/control-anyr doctor
+ANYR_RELEASES_JSON="$(.agents/skills/verify-anyr/control-anyr path RELEASES_FIXTURE)"
 ANYR_CHANNEL=beta
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/update-progress/update.txt -- update
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/update-progress/check.txt -- update --check
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/update-progress/update.txt -- update
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/update-progress/check.txt -- update --check
 ANYR_SPINNER_MS=20 ANYR_SPINNER_MIN_TICKS=6 \
-  .cursor/skills/verify-anyr/control-anyr pty run --timeout 6 --out artifacts/update-progress/tty.txt -- update
-.cursor/skills/verify-anyr/control-anyr test -- --test cli update_prints_from_to_channel_and_success
-.cursor/skills/verify-anyr/control-anyr test -- --test cli update_spinner_animates_on_tty
-.cursor/skills/verify-anyr/control-anyr cleanup
+  .agents/skills/verify-anyr/control-anyr pty run --timeout 6 --out artifacts/update-progress/tty.txt -- update
+.agents/skills/verify-anyr/control-anyr test -- --test cli update_prints_from_to_channel_and_success
+.agents/skills/verify-anyr/control-anyr test -- --test cli update_spinner_animates_on_tty
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
 ## Results

@@ -2,30 +2,30 @@
 
 Feature: `routing-filters`
 Entry points driven: `anyr menu --dump-tui`, `anyr models --dump-tui`, `anyr config --dump-tui`, `anyr claude --dry-run --yes --model anyrouter/auto`, `anyr claude --dry-run --yes --model anyrouter/free`, PTY `anyr menu` (focus + exacto toggle)
-Harness: `.cursor/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `test`, `pty`, `cleanup`)
+Harness: `.agents/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `test`, `pty`, `cleanup`)
 Binary: `target/debug/anyr` from this checkout (`0.1.11`)
 Isolated home: `/tmp/anyr-verify-20260903-130039-7117/home` (removed by cleanup)
 
 ## Commands
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr launch
-.cursor/skills/verify-anyr/control-anyr doctor
-.cursor/skills/verify-anyr/control-anyr test -- --lib --test cli
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/menu-dump.txt -- menu --dump-tui
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/models-dump.txt -- models --dump-tui
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/config-dump.txt -- config --dump-tui
+.agents/skills/verify-anyr/control-anyr launch
+.agents/skills/verify-anyr/control-anyr doctor
+.agents/skills/verify-anyr/control-anyr test -- --lib --test cli
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/menu-dump.txt -- menu --dump-tui
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/models-dump.txt -- models --dump-tui
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/config-dump.txt -- config --dump-tui
 # write agents.claude provider.sort / require_params / min_context (and pin anyrouter/auto)
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/menu-dump-after.txt -- menu --dump-tui
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/claude-auto.txt -- claude --dry-run --yes --model anyrouter/auto
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/claude-free.txt -- claude --dry-run --yes --model anyrouter/free
-.cursor/skills/verify-anyr/control-anyr pty start -- menu
-.cursor/skills/verify-anyr/control-anyr pty send Down   # retarget configure to codex
-.cursor/skills/verify-anyr/control-anyr pty send Up
-.cursor/skills/verify-anyr/control-anyr pty send --literal 'exa'
-.cursor/skills/verify-anyr/control-anyr pty send Enter  # toggle claude exacto off
-.cursor/skills/verify-anyr/control-anyr pty stop
-.cursor/skills/verify-anyr/control-anyr cleanup
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/menu-dump-after.txt -- menu --dump-tui
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/claude-auto.txt -- claude --dry-run --yes --model anyrouter/auto
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/routing-filters/claude-free.txt -- claude --dry-run --yes --model anyrouter/free
+.agents/skills/verify-anyr/control-anyr pty start -- menu
+.agents/skills/verify-anyr/control-anyr pty send Down   # retarget configure to codex
+.agents/skills/verify-anyr/control-anyr pty send Up
+.agents/skills/verify-anyr/control-anyr pty send --literal 'exa'
+.agents/skills/verify-anyr/control-anyr pty send Enter  # toggle claude exacto off
+.agents/skills/verify-anyr/control-anyr pty stop
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
 ## Results

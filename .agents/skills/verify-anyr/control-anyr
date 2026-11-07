@@ -3,14 +3,14 @@
 # ANYROUTER_HOME. One active run at a time.
 #
 # Usage (from repo root):
-#   .cursor/skills/verify-anyr/control-anyr launch
-#   .cursor/skills/verify-anyr/control-anyr doctor
-#   .cursor/skills/verify-anyr/control-anyr cli [--out PATH] -- <anyr-args...>
-#   .cursor/skills/verify-anyr/control-anyr test [-- cargo-test-args...]
-#   .cursor/skills/verify-anyr/control-anyr pty start|send|capture|stop|run
-#   .cursor/skills/verify-anyr/control-anyr path KEY
-#   .cursor/skills/verify-anyr/control-anyr paths
-#   .cursor/skills/verify-anyr/control-anyr cleanup
+#   .agents/skills/verify-anyr/control-anyr launch
+#   .agents/skills/verify-anyr/control-anyr doctor
+#   .agents/skills/verify-anyr/control-anyr cli [--out PATH] -- <anyr-args...>
+#   .agents/skills/verify-anyr/control-anyr test [-- cargo-test-args...]
+#   .agents/skills/verify-anyr/control-anyr pty start|send|capture|stop|run
+#   .agents/skills/verify-anyr/control-anyr path KEY
+#   .agents/skills/verify-anyr/control-anyr paths
+#   .agents/skills/verify-anyr/control-anyr cleanup
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
