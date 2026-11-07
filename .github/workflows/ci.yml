@@ -42,7 +42,7 @@ jobs:
           ANYR_PTY_REQUIRE_SHELLS: "1"
         run: cargo llvm-cov --locked --all-targets --lcov --output-path lcov.info
 
-      # Repo secret CODECOV_TOKEN from https://app.codecov.io/gh/anyrouter-dev/cli
+      # Repo secret CODECOV_TOKEN from https://app.codecov.io/gh/AnyRouterHQ/cli
       - uses: codecov/codecov-action@v5
         if: ${{ env.CODECOV_TOKEN != '' }}
         env:

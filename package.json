@@ -4,7 +4,7 @@
   "description": "AnyRouter CLI — native binary",
   "license": "MIT",
   "homepage": "https://anyrouter.dev/cli",
-  "repository": "git+https://github.com/anyrouter-dev/cli.git",
+  "repository": "git+https://github.com/AnyRouterHQ/cli.git",
   "bin": {
     "cli": "scripts/npx-anyr.js",
     "anyr": "scripts/npx-anyr.js",

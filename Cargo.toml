@@ -4,7 +4,7 @@ version = "0.1.37" # x-release-please-version
 edition = "2021"
 description = "AnyRouter CLI — native binary"
 license = "MIT"
-repository = "https://github.com/anyrouter-dev/cli"
+repository = "https://github.com/AnyRouterHQ/cli"
 homepage = "https://anyrouter.dev/cli"
 publish = false
 

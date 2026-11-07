@@ -348,7 +348,12 @@ fn download_binary(url: &str, dest: &Path) -> Result<(), String> {
 }
 
 /// Only official release assets may replace the binary.
-const RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/anyrouter-dev/cli/releases/download/";
+const RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/AnyRouterHQ/cli/releases/download/";
+/// Pre-transfer owner. GitHub 301s these to the canonical prefix above, and
+/// older release listings/fixtures still carry them, so accept both rather
+/// than refusing a legitimate asset after the rename.
+const LEGACY_RELEASE_DOWNLOAD_PREFIX: &str =
+    "https://github.com/anyrouter-dev/cli/releases/download/";
 
 /// First release that always ships `checksums.txt`. Older tags are legacy and
 /// may install unverified (with a warning); newer ones fail closed.
@@ -356,7 +361,10 @@ const CHECKSUMS_REQUIRED_FROM: &str = "0.1.14";
 
 fn validate_download_url(url: &str, env: &BTreeMap<String, String>) -> Result<(), String> {
     let mock = mock_release_base(env).filter(|base| url.starts_with(&format!("{base}/")));
-    if url.starts_with(RELEASE_DOWNLOAD_PREFIX) || mock.is_some() {
+    if url.starts_with(RELEASE_DOWNLOAD_PREFIX)
+        || url.starts_with(LEGACY_RELEASE_DOWNLOAD_PREFIX)
+        || mock.is_some()
+    {
         Ok(())
     } else {
         Err(format!(
@@ -1126,8 +1134,8 @@ mod tests {
     use crate::channel::{release_asset_url, select_latest, Channel, GITHUB_DOWNLOAD_PREFIX};
 
     const FIXTURE: &str = r#"[
-  {"tag_name":"v0.1.1","prerelease":false,"assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/v0.1.1/anyr-linux-x86_64"}]},
-  {"tag_name":"v0.1.2-beta.1","prerelease":true,"assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/v0.1.2-beta.1/anyr-linux-x86_64"}]}
+  {"tag_name":"v0.1.1","prerelease":false,"assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/v0.1.1/anyr-linux-x86_64"}]},
+  {"tag_name":"v0.1.2-beta.1","prerelease":true,"assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/v0.1.2-beta.1/anyr-linux-x86_64"}]}
 ]"#;
 
     fn rel(tag: &str) -> Release {
@@ -1196,11 +1204,15 @@ mod tests {
     fn download_url_must_be_official_https_release() {
         // WHY: a tampered releases listing must not point the updater at an
         // arbitrary host or plain http.
-        let ok = "https://github.com/anyrouter-dev/cli/releases/download/v0.1.15/anyr-linux-x86_64";
+        let ok = "https://github.com/AnyRouterHQ/cli/releases/download/v0.1.15/anyr-linux-x86_64";
         assert!(validate_download_url(ok, &BTreeMap::new()).is_ok());
+        // Pre-transfer URLs still resolve (301) and must not be refused.
+        let legacy =
+            "https://github.com/anyrouter-dev/cli/releases/download/v0.1.15/anyr-linux-x86_64";
+        assert!(validate_download_url(legacy, &BTreeMap::new()).is_ok());
         for bad in [
-            "http://github.com/anyrouter-dev/cli/releases/download/v0.1.15/anyr-linux-x86_64",
-            "https://evil.example/anyrouter-dev/cli/releases/download/v0.1.15/anyr",
+            "http://github.com/AnyRouterHQ/cli/releases/download/v0.1.15/anyr-linux-x86_64",
+            "https://evil.example/AnyRouterHQ/cli/releases/download/v0.1.15/anyr",
             "https://github.com/someone-else/cli/releases/download/v0.1.15/anyr",
             "file:///tmp/anyr",
         ] {
@@ -1305,7 +1317,7 @@ mod tests {
         let rel = select_latest(FIXTURE, Channel::Stable).unwrap();
         let url = release_asset_url(&rel, "linux", "x86_64");
         assert!(
-            url.contains("github.com/anyrouter-dev/cli/releases/download/"),
+            url.contains("github.com/AnyRouterHQ/cli/releases/download/"),
             "{url}"
         );
         assert!(url.contains(GITHUB_DOWNLOAD_PREFIX), "{url}");

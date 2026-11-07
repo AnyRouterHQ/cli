@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # AnyRouter CLI installer. Downloads GitHub Release binaries (not npm).
-#   curl -fsSL https://raw.githubusercontent.com/anyrouter-dev/cli/main/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/AnyRouterHQ/cli/main/setup.sh | bash
 #   curl -fsSL https://anyrouter.dev/setup.sh | bash
 #   ANYR_CHANNEL=beta ./setup.sh --channel beta
-# Assets: https://github.com/anyrouter-dev/cli/releases/download/<tag>/anyr-<os>-<arch>
+# Assets: https://github.com/AnyRouterHQ/cli/releases/download/<tag>/anyr-<os>-<arch>
 set -euo pipefail
 
-REPO="anyrouter-dev/cli"
-GITHUB="https://github.com/anyrouter-dev/cli"
-GITHUB_API="https://api.github.com/repos/anyrouter-dev/cli"
+REPO="AnyRouterHQ/cli"
+GITHUB="https://github.com/AnyRouterHQ/cli"
+GITHUB_API="https://api.github.com/repos/AnyRouterHQ/cli"
 
 BIN_NAME="anyr"
 BIN_DIR="${ANYR_BIN_DIR:-${HOME}/.local/bin}"
@@ -243,7 +243,7 @@ import re, sys
 html = sys.stdin.read()
 seen = set()
 tags = []
-for m in re.finditer(r"anyrouter-dev/cli/releases/tag/(v[0-9][^\"<>\s#?]*)", html):
+for m in re.finditer(r"releases/tag/(v[0-9][^\"<>\s#?]*)", html):
     tag = m.group(1).rstrip("/")
     if tag in seen or "/" in tag:
         continue
@@ -272,7 +272,7 @@ for t in tags:
 '
     return
   fi
-  printf '%s' "$html" | grep -oE 'anyrouter-dev/cli/releases/tag/v[^"<>[:space:]#?]+' \
+  printf '%s' "$html" | grep -oE 'releases/tag/v[^"<>[:space:]#?]+' \
     | sed 's|.*/||' | awk '!s[$0]++'
 }
 

@@ -4,14 +4,14 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-pub const GITHUB_REPO: &str = "anyrouter-dev/cli";
-pub const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/anyrouter-dev/cli/releases";
-pub const GITHUB_RELEASES_HTML: &str = "https://github.com/anyrouter-dev/cli/releases";
+pub const GITHUB_REPO: &str = "AnyRouterHQ/cli";
+pub const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/AnyRouterHQ/cli/releases";
+pub const GITHUB_RELEASES_HTML: &str = "https://github.com/AnyRouterHQ/cli/releases";
 pub const GITHUB_EXPANDED_ASSETS_PREFIX: &str =
-    "https://github.com/anyrouter-dev/cli/releases/expanded_assets/";
-pub const GITHUB_DOWNLOAD_PREFIX: &str = "https://github.com/anyrouter-dev/cli/releases/download/";
+    "https://github.com/AnyRouterHQ/cli/releases/expanded_assets/";
+pub const GITHUB_DOWNLOAD_PREFIX: &str = "https://github.com/AnyRouterHQ/cli/releases/download/";
 pub const GITHUB_LATEST_DOWNLOAD: &str =
-    "https://github.com/anyrouter-dev/cli/releases/latest/download";
+    "https://github.com/AnyRouterHQ/cli/releases/latest/download";
 
 /// Token for `api.github.com`. Never send these to AnyRouter.
 pub fn github_token(env: &BTreeMap<String, String>) -> Option<&str> {
@@ -361,8 +361,11 @@ fn find_all_after<'a>(html: &'a str, prefix: &str) -> Vec<(usize, &'a str)> {
 }
 
 /// Tag names and prerelease flags from a GitHub `/releases` HTML page.
+/// Owner-agnostic (`releases/tag/` only): the repo transferred from
+/// anyrouter-dev/cli to AnyRouterHQ/cli, and the old parser matched the
+/// old owner prefix, so the renamed page parsed to zero tags.
 pub fn parse_release_tags_html(html: &str) -> Vec<(String, bool)> {
-    let found = find_all_after(html, "anyrouter-dev/cli/releases/tag/");
+    let found = find_all_after(html, "releases/tag/");
     let mut out = Vec::new();
     let mut seen = BTreeMap::new();
     for (i, (start, tag)) in found.iter().enumerate() {
@@ -390,9 +393,10 @@ pub fn parse_release_tags_html(html: &str) -> Vec<(String, bool)> {
 }
 
 /// Asset hrefs from a release page or `expanded_assets` HTML fragment.
+/// Owner-agnostic for the same repo-transfer reason as the tag parser.
 pub fn parse_download_hrefs(html: &str) -> BTreeMap<String, Vec<ReleaseAsset>> {
     let mut by_tag: BTreeMap<String, Vec<ReleaseAsset>> = BTreeMap::new();
-    for (_, spec) in find_all_after(html, "anyrouter-dev/cli/releases/download/") {
+    for (_, spec) in find_all_after(html, "releases/download/") {
         let Some((tag, name)) = spec.split_once('/') else {
             continue;
         };
@@ -450,7 +454,7 @@ pub fn merge_expanded_assets(release: &mut Release, html: &str) {
 
 /// Download URL for `anyr-{os}-{arch}` on this release.
 /// Prefers `browser_download_url` from the asset list; otherwise constructs
-/// `https://github.com/anyrouter-dev/cli/releases/download/{tag}/{asset}`.
+/// `https://github.com/AnyRouterHQ/cli/releases/download/{tag}/{asset}`.
 pub fn release_asset_url(release: &Release, os: &str, arch: &str) -> String {
     let name = asset_name(os, arch);
     if let Some(asset) = release.assets.iter().find(|a| a.name == name) {
@@ -523,7 +527,7 @@ mod tests {
         let url = latest_stable_download_url("linux", "x86_64");
         assert_eq!(
             url,
-            "https://github.com/anyrouter-dev/cli/releases/latest/download/anyr-linux-x86_64"
+            "https://github.com/AnyRouterHQ/cli/releases/latest/download/anyr-linux-x86_64"
         );
         assert!(!url.contains("duyet/anyrouter"));
     }
@@ -625,7 +629,34 @@ mod tests {
             "{beta:?}"
         );
         assert!(beta.assets.iter().any(|a| a.browser_download_url
-            == "https://github.com/anyrouter-dev/cli/releases/download/v0.1.12-beta.98/anyr-linux-x86_64"));
+            == "https://github.com/AnyRouterHQ/cli/releases/download/v0.1.12-beta.98/anyr-linux-x86_64"));
+    }
+
+    #[test]
+    fn parse_releases_html_handles_transferred_owner() {
+        // WHY: the repo moved anyrouter-dev/cli -> AnyRouterHQ/cli; the
+        // live page now uses /AnyRouterHQ/cli/releases/tag/... and the old
+        // owner-anchored parser returned zero tags.
+        let html = r#"
+<a href="/AnyRouterHQ/cli/releases/tag/v0.1.37">v0.1.37</a>
+<span>Latest</span>
+<a href="/AnyRouterHQ/cli/releases/tag/v0.1.38-beta.689">v0.1.38-beta.689</a>
+<span class="Label">Pre-release</span>
+<a href="/AnyRouterHQ/cli/releases/download/v0.1.37/anyr-linux-x86_64">anyr-linux-x86_64</a>
+"#;
+        let rels = parse_releases_html(html).unwrap();
+        assert_eq!(rels.len(), 2, "{rels:?}");
+        let stable = rels.iter().find(|r| r.tag_name == "v0.1.37").unwrap();
+        assert!(!stable.prerelease);
+        assert!(
+            stable.assets.iter().any(|a| a.name == "anyr-linux-x86_64"),
+            "{stable:?}"
+        );
+        let beta = rels
+            .iter()
+            .find(|r| r.tag_name == "v0.1.38-beta.689")
+            .unwrap();
+        assert!(beta.prerelease);
     }
 
     #[test]

@@ -625,7 +625,7 @@ Channels:
   beta               every push to main (GitHub prerelease)
 
 Downloads:
-  https://github.com/anyrouter-dev/cli/releases/download/<tag>/anyr-<os>-<arch>
+  https://github.com/AnyRouterHQ/cli/releases/download/<tag>/anyr-<os>-<arch>
 
 While installing, a spinner ticks with the from → to versions and channel:
 

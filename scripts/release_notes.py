@@ -2,8 +2,10 @@
 """Build GitHub release notes from the release-please CHANGELOG.
 
 Release-please writes CHANGELOG.md (grouped conventional commits, compare
-links, SHAs). GitHub Releases should show that changelog — the tagged version
-plus every older version — then the optional bench report.
+links, SHAs). GitHub Releases should show only the tagged version's section
+— not the full history — then the optional bench report. CHANGELOG.md itself
+keeps the full history; a release page that repeats it is unreadable (v0.1.37
+was 44k chars / 38 versions).
 """
 from __future__ import annotations
 
@@ -13,14 +15,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = "https://github.com/anyrouter-dev/cli"
+REPO = "https://github.com/AnyRouterHQ/cli"
 ROOT = Path(__file__).resolve().parents[1]
 CHANGELOG = ROOT / "CHANGELOG.md"
 HEADER = """# Changelog
 
 This file is maintained automatically by [release-please](https://github.com/googleapis/release-please).
 
-GitHub Releases use this file as the release notes (full history through that tag).
+GitHub Releases use only the tagged version's section as the release notes.
 """
 
 # Same grouping release-please uses with the default changelog notes builder.
@@ -174,7 +176,7 @@ def cmd_changelog(_args: argparse.Namespace) -> None:
 
 def cmd_github(args: argparse.Namespace) -> None:
     versions = parse_changelog(CHANGELOG.read_text(encoding="utf-8"))
-    notes = notes_from(versions, args.tag, full=True)
+    notes = notes_from(versions, args.tag, full=False)
     if args.bench:
         bench = Path(args.bench).read_text(encoding="utf-8").strip()
         if bench:

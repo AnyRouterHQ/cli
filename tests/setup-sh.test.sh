@@ -10,7 +10,7 @@ SETUP="${ROOT}/setup.sh"
   exit 1
 }
 
-grep -q 'github.com/anyrouter-dev/cli' "$SETUP"
+grep -q 'github.com/AnyRouterHQ/cli' "$SETUP"
 grep -q 'stable' "$SETUP"
 grep -q 'beta' "$SETUP"
 grep -q 'auth login' "$SETUP"

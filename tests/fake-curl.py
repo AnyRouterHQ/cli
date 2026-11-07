@@ -64,7 +64,7 @@ def classify(url: str) -> str:
         return "beta-asset"
     if "/releases/download/v0.1.20/" in url:
         return "checksummed-sums" if url.endswith("/checksums.txt") else "checksummed-asset"
-    if url.rstrip("/").endswith("/anyrouter-dev/cli/releases"):
+    if url.rstrip("/").endswith("/releases"):
         return "listing"
     if "/expanded_assets/" in url:
         return "expanded"
@@ -96,7 +96,7 @@ def body_and_code(url: str, headers: list[str]) -> tuple[int, bytes]:
         return 200, LISTING.read_bytes()
     if kind == "expanded":
         return 200, (
-            b'<a href="/anyrouter-dev/cli/releases/download/'
+            b'<a href="/AnyRouterHQ/cli/releases/download/'
             b'v0.1.12-beta.98/anyr-linux-x86_64">anyr-linux-x86_64</a>'
         )
     return 404, b"unexpected URL: " + url.encode()

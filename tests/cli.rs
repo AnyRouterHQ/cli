@@ -1161,7 +1161,7 @@ fn upgrade_check_flag_is_known() {
     ));
     std::fs::write(
         &fixture,
-        r#"[{"tag_name":"v0.1.0","prerelease":false,"draft":false,"assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/v0.1.0/anyr-linux-x86_64"}]}]"#,
+        r#"[{"tag_name":"v0.1.0","prerelease":false,"draft":false,"assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/v0.1.0/anyr-linux-x86_64"}]}]"#,
     )
     .expect("write fixture");
     let out = anyr()
@@ -1216,7 +1216,7 @@ fn upgrade_check_newer_stable_would_upgrade() {
         "check should show old -> new, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("github.com/anyrouter-dev/cli/releases/download/"),
+        stdout.contains("github.com/AnyRouterHQ/cli/releases/download/"),
         "{stdout}"
     );
 }
@@ -1753,7 +1753,7 @@ fn upgrade_auto_is_quiet_when_up_to_date() {
     std::fs::write(
         &fixture,
         format!(
-            r#"[{{"tag_name":"v{ver}","prerelease":false,"assets":[{{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/v{ver}/anyr-linux-x86_64"}}]}}]"#
+            r#"[{{"tag_name":"v{ver}","prerelease":false,"assets":[{{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/v{ver}/anyr-linux-x86_64"}}]}}]"#
         ),
     )
     .expect("write fixture");
@@ -3012,7 +3012,7 @@ fn ahead_of_stable_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf
     let home = std::env::temp_dir().join(format!("anyr-ahead-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("home");
-    let asset = r#""assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/vX/anyr-linux-x86_64"},{"name":"anyr-linux-arm64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/vX/anyr-linux-arm64"},{"name":"anyr-darwin-arm64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/vX/anyr-darwin-arm64"},{"name":"anyr-darwin-x86_64","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/vX/anyr-darwin-x86_64"},{"name":"anyr-windows-x86_64.exe","browser_download_url":"https://github.com/anyrouter-dev/cli/releases/download/vX/anyr-windows-x86_64.exe"}]"#;
+    let asset = r#""assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/vX/anyr-linux-x86_64"},{"name":"anyr-linux-arm64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/vX/anyr-linux-arm64"},{"name":"anyr-darwin-arm64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/vX/anyr-darwin-arm64"},{"name":"anyr-darwin-x86_64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/vX/anyr-darwin-x86_64"},{"name":"anyr-windows-x86_64.exe","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/vX/anyr-windows-x86_64.exe"}]"#;
     let fixture = home.join("releases.json");
     std::fs::write(
         &fixture,

@@ -281,7 +281,7 @@ fn npm_package_is_public_next_tag() {
     assert!(compact.contains("\"anyr\":\"scripts/npx-anyr.js\""));
     assert!(compact.contains("\"anyrouter\":\"scripts/npx-anyr.js\""));
     assert!(compact.contains("\"ar\":\"scripts/npx-anyr.js\""));
-    assert!(pkg.contains("git+https://github.com/anyrouter-dev/cli.git"));
+    assert!(pkg.contains("git+https://github.com/AnyRouterHQ/cli.git"));
 }
 
 #[test]
@@ -316,7 +316,7 @@ fn wrapper_and_install_scripts_exist() {
     must_exist("CHANGELOG.md");
     must_exist("README.md");
     let wrapper = read("scripts/npx-anyr.js");
-    assert!(wrapper.contains("github.com/anyrouter-dev/cli"));
+    assert!(wrapper.contains("github.com/AnyRouterHQ/cli"));
     assert!(wrapper.contains("binaries"));
     assert!(wrapper.contains("anyr-windows-x86_64.exe"));
     let install = read("scripts/install.sh");

@@ -117,7 +117,7 @@ fn demo_argv(argv: Vec<String>) -> Result<String, String> {
             crate::help::invoked_bin()
         )),
         "upgrade" | "update" => Ok(format!(
-            "{} upgrade checks GitHub Releases (anyrouter-dev/cli) on the native binary.\n{DEMO_HINT}",
+            "{} upgrade checks GitHub Releases (AnyRouterHQ/cli) on the native binary.\n{DEMO_HINT}",
             crate::help::invoked_bin()
         )),
         _ => {

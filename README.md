@@ -13,8 +13,8 @@ and model already wired to the gateway. It also chats with models, manages keys
 and presets, publishes pages, and serves your local models. This line is
 **0.1.x**.
 
-[![CI](https://github.com/anyrouter-dev/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/anyrouter-dev/cli/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/anyrouter-dev/cli/branch/main/graph/badge.svg)](https://codecov.io/gh/anyrouter-dev/cli)
+[![CI](https://github.com/AnyRouterHQ/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/AnyRouterHQ/cli/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/AnyRouterHQ/cli/branch/main/graph/badge.svg)](https://codecov.io/gh/AnyRouterHQ/cli)
 
 ## Features
 
@@ -33,7 +33,7 @@ curl -fsSL https://anyrouter.dev/setup.sh | bash
 ```
 
 The installer downloads `anyr-<os>-<arch>` from
-[GitHub Releases](https://github.com/anyrouter-dev/cli/releases) into
+[GitHub Releases](https://github.com/AnyRouterHQ/cli/releases) into
 `~/.local/bin`. Add that directory to `PATH` if the installer says so. CI builds
 linux x86_64/arm64, macOS x86_64/arm64, Windows x86_64 and wasm32.
 
@@ -41,15 +41,15 @@ The same script is served from this repo, and `--channel beta` installs the
 prerelease that every push to `main` publishes:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anyrouter-dev/cli/main/setup.sh | bash
-curl -fsSL https://raw.githubusercontent.com/anyrouter-dev/cli/main/setup.sh | bash -s -- --channel beta
+curl -fsSL https://raw.githubusercontent.com/AnyRouterHQ/cli/main/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AnyRouterHQ/cli/main/setup.sh | bash -s -- --channel beta
 ```
 
 Use `setup.sh` instead of a hand-built `releases/latest/download/...` URL. When
 the latest non-prerelease has no assets (v0.1.11 shipped empty) that URL 404s,
 and `setup.sh` falls back to a release that has `anyr-linux-x86_64`. Direct tag
 URLs look like
-`https://github.com/anyrouter-dev/cli/releases/download/<tag>/anyr-linux-x86_64`.
+`https://github.com/AnyRouterHQ/cli/releases/download/<tag>/anyr-linux-x86_64`.
 More at [anyrouter.dev/cli](https://anyrouter.dev/cli).
 
 ### npm / npx
@@ -631,7 +631,7 @@ and `anyr help agents` is the guide for scripts and coding agents.
 
 ## Feedback
 
-[Open an issue](https://github.com/anyrouter-dev/cli/issues/new) in this repo.
+[Open an issue](https://github.com/AnyRouterHQ/cli/issues/new) in this repo.
 
 ## Contributing
 

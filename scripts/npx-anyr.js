@@ -8,7 +8,7 @@ const os = require("os");
 const path = require("path");
 
 const VERSION = require("../package.json").version;
-const GITHUB_DOWNLOAD = "https://github.com/anyrouter-dev/cli/releases/download";
+const GITHUB_DOWNLOAD = "https://github.com/AnyRouterHQ/cli/releases/download";
 
 function assetName() {
   const plat = process.platform;
