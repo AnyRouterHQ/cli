@@ -266,18 +266,53 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                 .filter(|s| !s.is_empty())
                 .ok_or("Create-key response did not include a key.")?
                 .to_string();
+            let hash = created
+                .get("data")
+                .and_then(|d| d.get("hash"))
+                .and_then(|v| v.as_str())
+                .or_else(|| created.get("hash").and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let as_json = parsed.flag_true("json");
+            let account_str = if account.is_empty() {
+                cfg.active_profile.clone()
+            } else {
+                account.clone()
+            };
+            let print_created_json = |saved: bool| {
+                let body = serde_json::json!({
+                    "name": name,
+                    "hash": hash,
+                    "key": key,
+                    "agent": agent,
+                    "account": account_str,
+                    "saved": saved,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into())
+                );
+            };
             if let Some(agent) = &agent {
                 // Show the secret before saving: if the save fails, the key
                 // already exists on the server and this is its only copy.
-                if parsed.flag_true("quiet") {
+                // Under --json the key is in the printed JSON either way, so
+                // a failed save never loses it.
+                let bound = cfg.agent_binding(agent).and_then(|b| b.profile.clone());
+                let replaced = cfg.agent_binding_mut(agent).api_key.replace(key.clone());
+                let save_err = write_config(&cfg, &path).err();
+                if as_json {
+                    print_created_json(save_err.is_none());
+                } else if parsed.flag_true("quiet") {
                     println!("{key}");
                 } else {
                     println!("Created \"{name}\" in {account}:\n\n  {key}\n\nShown once.");
                 }
-                let bound = cfg.agent_binding(agent).and_then(|b| b.profile.clone());
-                let replaced = cfg.agent_binding_mut(agent).api_key.replace(key.clone());
-                write_config(&cfg, &path)
-                    .map_err(|err| format!("The key above was not saved for {agent}: {err}"))?;
+                if let Some(err) = save_err {
+                    return Err(format!(
+                        "The key above was not saved for {agent}: {err}"
+                    ));
+                }
                 if let Some(bound) = bound.filter(|b| *b != account) {
                     eprintln!(
                         "{}",
@@ -286,9 +321,24 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                         ))
                     );
                 }
-                if !parsed.flag_true("quiet") {
+                if !parsed.flag_true("quiet") && !as_json {
                     print_agent_key_saved(agent, &key, replaced.as_deref());
                 }
+                return Ok(0);
+            }
+            if as_json {
+                // No prompt under --json; save only on explicit --yes/--ok.
+                let save = parsed.skip_confirm();
+                let mut saved = false;
+                if save {
+                    let active = cfg.active_profile.clone();
+                    if let Some(p) = cfg.profiles.get_mut(&active) {
+                        p.api_key = Some(key.clone());
+                    }
+                    write_config(&cfg, &path)?;
+                    saved = true;
+                }
+                print_created_json(saved);
                 return Ok(0);
             }
             if parsed.flag_true("quiet") {

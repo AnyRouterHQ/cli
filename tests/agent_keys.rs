@@ -294,6 +294,35 @@ fn create_quiet_for_an_agent_still_saves_and_prints_only_the_secret() {
 }
 
 #[test]
+fn create_json_for_an_agent_saves_and_prints_one_object() {
+    let h = home();
+    let (base, _rx) = serve(vec![(
+        201,
+        format!(r#"{{"key":"{MINTED_KEY}","data":{{"hash":"h1"}}}}"#),
+    )]);
+    let out = ok(
+        &h,
+        &[
+            "keys",
+            "create",
+            "--agent",
+            "claude",
+            "--json",
+            "--base-url",
+            &base,
+        ],
+        None,
+    );
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["key"], MINTED_KEY);
+    assert_eq!(v["hash"], "h1");
+    assert_eq!(v["agent"], "claude");
+    assert_eq!(v["saved"], true);
+    let line = launch_auth(&h, "claude", "ANTHROPIC_AUTH_TOKEN", &[]);
+    assert!(line.ends_with(last4(MINTED_KEY)), "{line}");
+}
+
+#[test]
 fn renaming_or_removing_an_account_keeps_agent_bindings_consistent() {
     let h = home();
     ok(&h, &["account", "use", "work", "--agent", "codex"], None);
