@@ -743,8 +743,9 @@ Usage:
   {bin} artifact visibility <id> --show-author  Show or hide your name on the page
 
 A file (html or md) is sent inline. A folder is uploaded file by file;
-dotfiles, node_modules and .git are skipped. Limits: 5 MB per file,
-50 files, 20 MB per publish.
+dotfiles, node_modules and .git are skipped. Limits: 5 MB for a single
+file; a folder takes 200 files and 100 MB per publish, 25 MB per image
+or other asset, 5 MB per page or source file.
 
 Options:
   --title <text>       Page title

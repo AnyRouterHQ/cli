@@ -208,7 +208,7 @@ anyr artifact rm <id> --yes
 ```
 
 A file is sent inline; a folder uploads file by file and skips dotfiles,
-`node_modules` and `.git` (limits: 5 MB per file, 50 files, 20 MB). `--id`
+`node_modules` and `.git` (limits: 200 files and 100 MB per publish, 25 MB per asset, 5 MB per page or source file, 5 MB for a single file). `--id`
 builds on the current version; if someone published first the command exits 2
 and prints the current version. `public` asks for confirmation unless `--yes`.
 

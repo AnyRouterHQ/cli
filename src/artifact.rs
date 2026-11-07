@@ -60,9 +60,13 @@ fn canonical_visibility(v: &str) -> Option<&'static str> {
         _ => VISIBILITIES.iter().copied().find(|known| *known == v),
     }
 }
-const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
-const MAX_FILES: usize = 50;
-const MAX_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
+/// A single file is sent inline in one JSON body, so it keeps the inline cap.
+const MAX_INLINE_BYTES: u64 = 5 * 1024 * 1024;
+/// Folder caps match the server: 25 MB per asset (the server holds page and
+/// source files to 5 MB and says so), 200 files and 100 MB per publish.
+const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_FILES: usize = 200;
+const MAX_TOTAL_BYTES: u64 = 100 * 1024 * 1024;
 
 /// A request that did not succeed, carrying the exit code to return.
 struct Fail {
@@ -204,9 +208,9 @@ fn publish(ctx: &Ctx, parsed: &ParsedArgs, path: &str) -> Res<()> {
 
 /// `{ "<name>": { "content": ..., "encoding": "utf8" } }` for one file.
 fn inline_file(src: &Path, size: u64) -> Res<Value> {
-    if size > MAX_FILE_BYTES {
+    if size > MAX_INLINE_BYTES {
         return Err(usage(format!(
-            "{} is {} bytes; the limit is {MAX_FILE_BYTES} per file.",
+            "{} is {} bytes; the limit is {MAX_INLINE_BYTES} for a single file.",
             src.display(),
             size
         )));
