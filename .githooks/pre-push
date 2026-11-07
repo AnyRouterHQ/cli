@@ -1,0 +1,17 @@
+#!/bin/sh
+# Run CI's lint job before pushing: fmt and clippy, about 6s with a warm target.
+# Skip: ANYR_SKIP_PREPUSH=1 git push
+# Enable: ./scripts/install-hooks.sh   (git config core.hooksPath .githooks)
+
+if [ "${ANYR_SKIP_PREPUSH-}" = "1" ]; then
+  exit 0
+fi
+
+cargo fmt --check || {
+  echo "pre-push: formatting differs. Run cargo fmt, or skip with ANYR_SKIP_PREPUSH=1." >&2
+  exit 1
+}
+cargo clippy --locked --all-targets -- -D warnings || {
+  echo "pre-push: clippy failed. Fix the warnings, or skip with ANYR_SKIP_PREPUSH=1." >&2
+  exit 1
+}
