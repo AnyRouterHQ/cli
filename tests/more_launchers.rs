@@ -507,12 +507,16 @@ fn fx_connection_lists_every_tool_capable_chat_model_for_the_model_picker() {
     assert_eq!(meta["meta/muse-glimmer-30b"]["context_window"], 131_072);
 }
 
+/// What fx 0.0.16 accepts, measured by running it (256 loads, 257 exits
+/// `fx: LimitExceeded`). Deliberately not the constant under test.
+const FX_ACCEPTS_AT_MOST: usize = 256;
+
 /// fx exits `fx: LimitExceeded` on a connection with more than 256
 /// `model_metadata` entries; the launch model must survive the cut even when
 /// it sits past the cap in catalog order.
 #[test]
 fn fx_connection_stays_within_fxs_model_metadata_cap() {
-    let max = anyr_cli::spawn::FX_MAX_MODEL_METADATA;
+    let max = FX_ACCEPTS_AT_MOST;
     let catalog: Vec<_> = (0..max + 54)
         .map(|i| anyr_cli::http::CatalogModel {
             id: format!("owner/model-{i}"),
@@ -530,7 +534,101 @@ fn fx_connection_stays_within_fxs_model_metadata_cap() {
     );
     let meta = conn["model_metadata"].as_object().unwrap();
     assert_eq!(meta.len(), max);
-    assert!(meta.contains_key(&last), "the launch model must stay listed");
+    assert!(
+        meta.contains_key(&last),
+        "the launch model must stay listed"
+    );
+}
+
+/// The built binary, a gateway catalog bigger than fx accepts, and the file fx
+/// reads. This is the path that printed `fx: LimitExceeded` once the live
+/// catalog passed 256 tool-capable models.
+#[cfg(unix)]
+#[test]
+fn fx_launch_with_an_oversized_catalog_writes_settings_fx_accepts() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    let max = FX_ACCEPTS_AT_MOST;
+    let models: Vec<_> = (0..max + 54)
+        .map(|i| {
+            serde_json::json!({
+                "id": format!("owner/model-{i}"),
+                "context_length": 8000,
+                "capabilities": ["chat", "function-calling"],
+            })
+        })
+        .collect();
+    let catalog = serde_json::json!({ "data": models }).to_string();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/api", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            let mut len = 0usize;
+            if reader.read_line(&mut line).is_err() {
+                continue;
+            }
+            loop {
+                let mut h = String::new();
+                if reader.read_line(&mut h).is_err() || h.trim().is_empty() {
+                    break;
+                }
+                if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut sink = vec![0u8; len];
+            let _ = reader.read_exact(&mut sink);
+            let (status, body) = if line.contains("/v1/models") {
+                (200, catalog.as_str())
+            } else {
+                (401, r#"{"error":{"message":"x"}}"#)
+            };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    let dir = temp_dir("fx-big");
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let fake = dir.join("fake-fx");
+    std::fs::write(&fake, FAKE_AGENT).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = anyr(&dir, &home, "fx", &["--base-url", &base, "--command-path"])
+        .arg(&fake)
+        .env_remove("ANYR_NO_CATALOG")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".fx").join("settings.json")).unwrap(),
+    )
+    .unwrap();
+    let meta = cfg["providers"]["anyrouter"]["model_metadata"]
+        .as_object()
+        .unwrap();
+    assert!(
+        meta.len() > 1,
+        "the catalog never reached the launch, so this test checked nothing"
+    );
+    assert!(
+        meta.len() <= max,
+        "{} model_metadata entries; fx exits LimitExceeded above {max}",
+        meta.len()
+    );
+    assert!(
+        meta.contains_key(MODEL),
+        "the launch model must stay listed"
+    );
 }
 
 /// A launch model the catalog does not list (a preset, an offline launch)
