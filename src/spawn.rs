@@ -1184,6 +1184,10 @@ pub const FX_CONNECTION: &str = "anyrouter";
 /// asks for a Vercel AI Gateway login instead.
 pub const FX_MIN_VERSION: (u32, u32, u32) = (0, 0, 11);
 
+/// fx refuses a connection with more than 256 `model_metadata` entries and
+/// exits `fx: LimitExceeded` (256 loads, 257 fails, checked on fx 0.0.16).
+pub const FX_MAX_MODEL_METADATA: usize = 256;
+
 /// `fx --version` prints `0.0.14`.
 pub fn parse_fx_version(output: &str) -> Option<(u32, u32, u32)> {
     let mut parts = output.trim().trim_start_matches('v').splitn(3, '.');
@@ -1245,6 +1249,10 @@ pub fn fx_connection(
     for row in catalog {
         let id = catalog_model_id(&row.id);
         if id != selected && !(has(row, "chat") && has(row, "function-calling")) {
+            continue;
+        }
+        if id != selected && metadata.len() >= FX_MAX_MODEL_METADATA && !metadata.contains_key(&id)
+        {
             continue;
         }
         let meta = metadata

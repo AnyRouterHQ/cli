@@ -507,6 +507,32 @@ fn fx_connection_lists_every_tool_capable_chat_model_for_the_model_picker() {
     assert_eq!(meta["meta/muse-glimmer-30b"]["context_window"], 131_072);
 }
 
+/// fx exits `fx: LimitExceeded` on a connection with more than 256
+/// `model_metadata` entries; the launch model must survive the cut even when
+/// it sits past the cap in catalog order.
+#[test]
+fn fx_connection_stays_within_fxs_model_metadata_cap() {
+    let max = anyr_cli::spawn::FX_MAX_MODEL_METADATA;
+    let catalog: Vec<_> = (0..max + 54)
+        .map(|i| anyr_cli::http::CatalogModel {
+            id: format!("owner/model-{i}"),
+            context_length: Some(8_000),
+            capabilities: vec!["chat".into(), "function-calling".into()],
+            ..Default::default()
+        })
+        .collect();
+    let last = catalog.last().unwrap().id.clone();
+    let conn = anyr_cli::spawn::fx_connection(
+        "https://gw.example/api/v1",
+        "ANYROUTER_API_KEY",
+        &last,
+        &catalog,
+    );
+    let meta = conn["model_metadata"].as_object().unwrap();
+    assert_eq!(meta.len(), max);
+    assert!(meta.contains_key(&last), "the launch model must stay listed");
+}
+
 /// A launch model the catalog does not list (a preset, an offline launch)
 /// still has to be selectable.
 #[test]
