@@ -28,7 +28,8 @@ are min-context floors on auto (not catalog SKUs).
   --dry-run             Print the child command and env (secrets redacted)
   --json                anyr's own output as JSON; never sent to the agent
                         (for the agent's own --json, put it after `--`)
-  --no-mcp              Don't connect the AnyRouter MCP gateway this launch
+  --no-mcp              Don't connect the AnyRouter MCP gateway (or its
+                        artifact tools) this launch
                         (`{bin} mcp auto off` turns it off on this machine)
   --device              Force the device-code flow (headless / SSH)
   --device-code         Alias of --device

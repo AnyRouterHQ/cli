@@ -1,9 +1,12 @@
 //! Wire the AnyRouter MCP gateway into a launched coding agent.
 //!
 //! `anyr <agent>` asks the gateway (`GET /v1/mcp/config`, with the inference
-//! key it launches with) whether the workspace has "auto-connect in coding
-//! agents" on, then hands the agent the MCP server the way that agent takes
-//! config. Per-launch config wins wherever the agent has it, so nothing of the
+//! key it launches with) what to connect, then hands the agent one MCP server
+//! the way that agent takes config. With "auto-connect in coding agents" on it
+//! is the whole gateway; otherwise it is the artifact tools alone
+//! (`/v1/mcp?tools=artifacts`), so the agent can publish a page and hand back a
+//! link with no setup. Only an owner who turns auto-connect off explicitly, or
+//! a key that may not publish artifacts, gets neither. Per-launch config wins wherever the agent has it, so nothing of the
 //! user's is edited. The agent reads the key from `ANYROUTER_API_KEY`, never
 //! from argv or a file it shares with other tools.
 //!
@@ -115,6 +118,8 @@ pub(crate) enum Decision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Setting {
     On,
+    /// Full auto-connect is off, but the artifact tools are on.
+    Artifacts,
     Off,
     /// 403 / 404: the key may not use MCP, or the gateway predates the setting.
     Absent,
@@ -153,11 +158,11 @@ fn decide_with(input: &DecideInput<'_>, fetch: &dyn Fn(&str, &str) -> Lookup) ->
     if input.no_mcp_flag {
         return Decision::Off("--no-mcp".into());
     }
-    if let Strategy::Unsupported(why) = strategy(input.tool) {
-        return Decision::Off(why.into());
-    }
     if input.config.and_then(|c| c.mcp_auto) == Some(false) {
         return Decision::Off("mcp.auto is off on this machine (`anyr mcp auto on`)".into());
+    }
+    if let Strategy::Unsupported(why) = strategy(input.tool) {
+        return Decision::Off(why.into());
     }
     let cache = input
         .cache_dir
@@ -182,14 +187,23 @@ fn decide_with(input: &DecideInput<'_>, fetch: &dyn Fn(&str, &str) -> Lookup) ->
         Ok(Setting::On) => Decision::On {
             url: mcp_url(input.base),
         },
+        Ok(Setting::Artifacts) => Decision::On {
+            url: artifacts_url(input.base),
+        },
         Ok(Setting::Off) => {
-            Decision::Off("auto-connect is off for this workspace (dashboard → MCP)".into())
+            Decision::Off("auto-connect is off for this workspace or key (dashboard → MCP)".into())
         }
         Ok(Setting::Absent) => {
             Decision::Off("this gateway or key has no MCP auto-connect setting".into())
         }
         Err(e) => Decision::Off(format!("could not read the MCP setting ({e})")),
     }
+}
+
+/// The gateway reduced to the artifact tools: what a launch connects when full
+/// auto-connect is off.
+pub(crate) fn artifacts_url(base: &str) -> String {
+    format!("{}?tools=artifacts", mcp_url(base))
 }
 
 /// `GET /v1/mcp/config`. 403 (key not allowed MCP) and 404 (older gateway) read
@@ -201,12 +215,46 @@ fn fetch_enabled(base: &str, key: &str) -> Lookup {
     match status {
         200..=299 => serde_json::from_str::<serde_json::Value>(&body)
             .ok()
-            .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
-            .map(|on| if on { Setting::On } else { Setting::Off })
+            .and_then(|v| parse_setting(&v))
             .ok_or_else(|| "unexpected response".to_string()),
         401 => Err("the key was rejected (HTTP 401)".into()),
         403 | 404 => Ok(Setting::Absent),
         s => Err(format!("HTTP {s}")),
+    }
+}
+
+/// `enabled` connects the whole gateway; failing that, `artifacts.enabled`
+/// connects the artifact tools. A gateway without the `artifacts` field
+/// predates them, so it gets only what it asked for.
+fn parse_setting(v: &serde_json::Value) -> Option<Setting> {
+    if v.get("enabled")?.as_bool()? {
+        return Some(Setting::On);
+    }
+    let artifacts = v
+        .get("artifacts")
+        .and_then(|a| a.get("enabled"))
+        .and_then(|e| e.as_bool())
+        .unwrap_or(false);
+    Some(if artifacts {
+        Setting::Artifacts
+    } else {
+        Setting::Off
+    })
+}
+
+/// One line for an interactive launch of an agent anyr cannot give MCP, so the
+/// user knows why it cannot publish artifacts. `None` for every other launch.
+pub(crate) fn unsupported_hint(tool: &str, decision: &Decision) -> Option<String> {
+    let Strategy::Unsupported(why) = strategy(tool) else {
+        return None;
+    };
+    // An opt-out (`--no-mcp`, `mcp.auto: false`) is decided first, so the
+    // decision carries the agent's own reason only when nothing opted out.
+    match decision {
+        Decision::Off(reason) if reason == why => Some(format!(
+            "anyr: {tool} gets no AnyRouter artifact tools: {why}."
+        )),
+        _ => None,
     }
 }
 
@@ -234,6 +282,7 @@ fn read_cache(path: &Path, key: &str, now: u64) -> Option<Lookup> {
     }
     match row.get("state")?.as_str()? {
         "on" => Some(Ok(Setting::On)),
+        "artifacts" => Some(Ok(Setting::Artifacts)),
         "off" => Some(Ok(Setting::Off)),
         "absent" => Some(Ok(Setting::Absent)),
         "error" => Some(Err(row.get("error")?.as_str()?.to_string())),
@@ -258,6 +307,7 @@ fn write_cache(path: &Path, key: &str, looked_up: &Lookup, now: u64) {
             Ok(setting) => {
                 let state = match setting {
                     Setting::On => "on",
+                    Setting::Artifacts => "artifacts",
                     Setting::Off => "off",
                     Setting::Absent => "absent",
                 };
@@ -503,7 +553,7 @@ fn not_connected(decision: &Decision) -> String {
     match decision {
         Decision::Off(why) => format!("mcp: off ({why})"),
         Decision::Unchecked => {
-            "mcp: not checked (--dry-run does not ask the gateway; a launch connects it when the workspace has auto-connect on)".into()
+            "mcp: not checked (--dry-run does not ask the gateway; a launch connects the gateway or its artifact tools unless the workspace turned auto-connect off)".into()
         }
         Decision::On { .. } => unreachable!("a connected launch has a url"),
     }
@@ -688,6 +738,65 @@ mod tests {
     }
 
     #[test]
+    fn artifacts_are_the_default_and_only_an_explicit_off_drops_them() {
+        let parse = |v: Value| parse_setting(&v);
+        // Full auto-connect wins and already carries the artifact tools.
+        assert_eq!(
+            parse(serde_json::json!({"enabled": true, "artifacts": {"enabled": true}})),
+            Some(Setting::On)
+        );
+        assert_eq!(
+            parse(serde_json::json!({"enabled": false, "artifacts": {"enabled": true}})),
+            Some(Setting::Artifacts)
+        );
+        // Owner turned it off, or the key may not publish.
+        assert_eq!(
+            parse(serde_json::json!({"enabled": false, "artifacts": {"enabled": false}})),
+            Some(Setting::Off)
+        );
+        // A gateway that predates artifacts over MCP: nothing new is connected.
+        assert_eq!(
+            parse(serde_json::json!({"enabled": false})),
+            Some(Setting::Off)
+        );
+        assert_eq!(parse(serde_json::json!({"artifacts": {}})), None);
+
+        let artifacts = |_: &str, _: &str| Ok(Setting::Artifacts);
+        assert_eq!(
+            decide_with(&input("claude", None), &artifacts),
+            Decision::On {
+                url: format!("{URL}?tools=artifacts")
+            }
+        );
+    }
+
+    #[test]
+    fn only_an_agent_without_mcp_gets_the_hint_and_only_without_an_opt_out() {
+        let never = |_: &str, _: &str| -> Lookup { panic!("fetched") };
+        for tool in ["pi", "aider", "qwen", "goose", "pool"] {
+            let d = decide_with(&input(tool, None), &never);
+            let hint = unsupported_hint(tool, &d).expect(tool);
+            assert!(hint.contains(tool) && hint.contains("artifact"), "{hint}");
+        }
+        let mut i = input("pi", None);
+        i.no_mcp_flag = true;
+        assert_eq!(unsupported_hint("pi", &decide_with(&i, &never)), None);
+        let cfg = Config {
+            mcp_auto: Some(false),
+            ..Config::default()
+        };
+        assert_eq!(
+            unsupported_hint("aider", &decide_with(&input("aider", Some(&cfg)), &never)),
+            None
+        );
+        let artifacts = |_: &str, _: &str| Ok(Setting::Artifacts);
+        assert_eq!(
+            unsupported_hint("claude", &decide_with(&input("claude", None), &artifacts)),
+            None
+        );
+    }
+
+    #[test]
     fn the_cache_hides_the_key_and_expires() {
         let dir = tmp("cache");
         let path = dir.join(CACHE_FILE);
@@ -699,6 +808,8 @@ mod tests {
             Some(Ok(Setting::On))
         );
         assert_eq!(read_cache(&path, &k, 1_000 + TTL_ANSWER_SECS), None);
+        write_cache(&path, &k, &Ok(Setting::Artifacts), 1_000);
+        assert_eq!(read_cache(&path, &k, 1_001), Some(Ok(Setting::Artifacts)));
         assert_eq!(
             read_cache(&path, &cache_key(BASE, "sk-ar-v1-other"), 1_001),
             None

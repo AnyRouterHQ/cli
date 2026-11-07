@@ -395,9 +395,15 @@ pub(crate) fn launch(
         }
         return Ok(0);
     }
+    let scripted = term::agent_mode(parsed, env);
+    if headless.is_none() && !scripted {
+        if let Some(hint) = crate::mcp_wiring::unsupported_hint(tool_name, &mcp_decision) {
+            eprintln!("{hint}");
+        }
+    }
     let install = if parsed.flag_true("install") {
         Install::Yes
-    } else if term::agent_mode(parsed, env) {
+    } else if scripted {
         Install::Never
     } else {
         Install::Ask

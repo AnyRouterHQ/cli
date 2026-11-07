@@ -107,7 +107,7 @@ def main() -> int:
         "kilo": lambda: opencode("KILO_CONFIG_CONTENT"),
         "crush": crush,
         "grok": grok,
-    }[agent]()
+    }.get(agent, lambda: None)()
     if server is None:
         print("NO_MCP")
         return 0

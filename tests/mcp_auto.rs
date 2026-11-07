@@ -28,7 +28,13 @@ struct Req {
 /// How the gateway answers `GET /api/v1/mcp/config`.
 #[derive(Clone, Copy)]
 enum Mode {
+    /// `true`: full auto-connect. `false`: the owner turned it off explicitly,
+    /// so the artifact tools are off too.
     Enabled(bool),
+    /// Full auto-connect off by default; the artifact tools stay on.
+    ArtifactsOnly,
+    /// A gateway that predates `artifacts` in `/mcp/config`, with auto-connect off.
+    LegacyOff,
     /// Answers after the CLI's 2.5 s timeout.
     Hang,
     ServerError,
@@ -48,6 +54,11 @@ impl Gateway {
 
     fn start_mode(mode: Mode) -> Self {
         let enabled = matches!(mode, Mode::Enabled(true));
+        let artifacts = match mode {
+            Mode::LegacyOff => None,
+            Mode::ArtifactsOnly | Mode::Enabled(true) => Some(true),
+            _ => Some(false),
+        };
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}/api", listener.local_addr().unwrap());
         let seen: Arc<Mutex<Vec<Req>>> = Arc::default();
@@ -92,7 +103,7 @@ impl Gateway {
                     let (status, out) = match mode {
                         Mode::ServerError if is_config => (500, r#"{"error":"boom"}"#.into()),
                         Mode::NotFound if is_config => (404, r#"{"error":"nope"}"#.into()),
-                        _ => route(&req, &body, enabled),
+                        _ => route(&req, &body, enabled, artifacts),
                     };
                     let _ = write!(
                         stream,
@@ -116,8 +127,10 @@ impl Gateway {
     }
 }
 
-fn route(req: &Req, body: &[u8], enabled: bool) -> (u16, String) {
-    let path = req.path.split('?').next().unwrap_or("");
+const ARTIFACT_TOOLS: &str = "publish_artifact,list_artifacts,get_artifact";
+
+fn route(req: &Req, body: &[u8], enabled: bool, artifacts: Option<bool>) -> (u16, String) {
+    let (path, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
     let authed = req.auth == format!("Bearer {KEY}");
     match (req.method.as_str(), path) {
         ("GET", "/api/v1/models") => (200, CATALOG.into()),
@@ -125,15 +138,19 @@ fn route(req: &Req, body: &[u8], enabled: bool) -> (u16, String) {
             200,
             r#"{"data":{"total_credits":1,"total_usage":0}}"#.into(),
         ),
-        ("GET", "/api/v1/mcp/config") if authed => (
-            200,
-            json!({"enabled": enabled, "setting": null, "default": enabled,
-                   "url": "ignored-by-the-cli", "can_edit": false})
-            .to_string(),
-        ),
+        ("GET", "/api/v1/mcp/config") if authed => {
+            let mut v = json!({"enabled": enabled, "setting": null, "default": enabled,
+                   "url": "ignored-by-the-cli", "can_edit": false});
+            if let Some(on) = artifacts {
+                v["artifacts"] = json!({"enabled": on, "url": "ignored-by-the-cli"});
+            }
+            (200, v.to_string())
+        }
         ("POST", "/api/v1/mcp") if authed => {
             let rpc: Value = serde_json::from_slice(body).unwrap_or_default();
             let result = match rpc["method"].as_str() {
+                Some("tools/list") if query == "tools=artifacts" => json!({"tools":
+                    ARTIFACT_TOOLS.split(',').map(|n| json!({"name": n})).collect::<Vec<_>>()}),
                 Some("tools/list") => {
                     json!({"tools": [{"name": "list_models"}, {"name": "get_system_status"}]})
                 }
@@ -377,4 +394,116 @@ fn a_slow_failing_or_absent_gateway_is_asked_once_not_on_every_launch() {
             "{tag}: the second launch waited on the gateway"
         );
     }
+}
+
+#[test]
+fn every_auto_agent_gets_the_artifact_tools_with_zero_setup() {
+    for agent in ["claude", "codex", "opencode", "grok", "kilo", "crush"] {
+        let gw = Gateway::start_mode(Mode::ArtifactsOnly);
+        let home = temp_home(&format!("{agent}-artifacts"));
+        login(&home, &gw.base);
+        // The user's own agent config files must come out byte-identical.
+        let user_files = [
+            (
+                home.join(".claude.json"),
+                "{\"mcpServers\":{\"mine\":{\"url\":\"https://x.test\"}}}\n",
+            ),
+            (
+                home.join(".claude").join("settings.json"),
+                "{\"theme\":\"dark\"}\n",
+            ),
+            (
+                home.join(".codex").join("config.toml"),
+                "model = \"gpt-5\"\n",
+            ),
+            (
+                home.join(".config").join("opencode").join("opencode.json"),
+                "{\"theme\":\"tokyonight\"}\n",
+            ),
+            (
+                home.join(".config").join("crush").join("crush.json"),
+                "{}\n",
+            ),
+            (home.join(".config").join("kilo").join("kilo.json"), "{}\n"),
+        ];
+        for (path, text) in &user_files {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let out = launch(&gw, &home, agent, &[]);
+        assert!(
+            out.contains(&format!("TOOLS {ARTIFACT_TOOLS}")),
+            "{agent} did not reach the artifact tools:\n{out}"
+        );
+        let mcp: Vec<Req> = gw
+            .hits("POST", "/api/v1/mcp")
+            .into_iter()
+            .filter(|r| r.path.ends_with("?tools=artifacts"))
+            .collect();
+        assert_eq!(mcp.len(), 2, "{agent}: {mcp:?}");
+        assert!(mcp.iter().all(|r| r.auth == format!("Bearer {KEY}")));
+        for (path, text) in &user_files {
+            assert_eq!(
+                &std::fs::read_to_string(path).unwrap(),
+                text,
+                "{agent} changed {}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_gateway_without_artifacts_over_mcp_gets_nothing_new() {
+    for agent in ["claude", "codex"] {
+        let gw = Gateway::start_mode(Mode::LegacyOff);
+        let home = temp_home(&format!("{agent}-legacy"));
+        login(&home, &gw.base);
+        assert_eq!(launch(&gw, &home, agent, &[]).trim(), "NO_MCP", "{agent}");
+        assert!(gw.hits("POST", "/api/v1/mcp").is_empty(), "{agent}");
+    }
+}
+
+#[test]
+fn a_scripted_launch_of_an_agent_without_mcp_prints_no_hint() {
+    let gw = Gateway::start_mode(Mode::ArtifactsOnly);
+    let home = temp_home("pi-hint");
+    login(&home, &gw.base);
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-mcp-agent.py");
+    let (code, out, err) = run(anyr(&home)
+        .args(["aider", "--yes", "--model", "z-ai/glm-4.7"])
+        .env("ANYROUTER_AIDER_PATH", &fake)
+        .env("FAKE_AGENT", "aider"));
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        !err.contains("artifact"),
+        "scripted run printed the hint:\n{err}"
+    );
+    assert!(gw.hits("GET", "/api/v1/mcp/config").is_empty());
+}
+
+#[test]
+fn grok_artifacts_entry_stays_out_of_the_users_own_grok_config() {
+    let gw = Gateway::start_mode(Mode::ArtifactsOnly);
+    let home = temp_home("grok-user-home");
+    login(&home, &gw.base);
+    // The user's Grok home is separate from anyr's private one.
+    let user_grok = home.join("user-grok");
+    std::fs::create_dir_all(&user_grok).unwrap();
+    let user = "[models]\ndefault = \"grok-4.5\"\n\n[mcp_servers.linear]\nurl = \"https://mcp.linear.app/mcp\"\n";
+    std::fs::write(user_grok.join("config.toml"), user).unwrap();
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-mcp-agent.py");
+    let (code, out, err) = run(anyr(&home)
+        .args(["grok", "--yes", "--model", "z-ai/glm-4.7"])
+        .env("GROK_HOME", &user_grok)
+        .env("ANYROUTER_GROK_PATH", &fake)
+        .env("FAKE_AGENT", "grok"));
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(&format!("TOOLS {ARTIFACT_TOOLS}")), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(user_grok.join("config.toml")).unwrap(),
+        user,
+        "anyr wrote into the user's own Grok config"
+    );
+    assert!(!out.contains(KEY) && !err.contains(KEY));
 }
