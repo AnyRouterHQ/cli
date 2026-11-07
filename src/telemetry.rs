@@ -169,6 +169,14 @@ fn save(env: &BTreeMap<String, String>, state: &State) {
     });
 }
 
+/// A cargo build, or any process started by `cargo test` / `cargo run`. Tests
+/// copy the binary out of `target/` (the self-update tests do), so the path
+/// alone is not enough: cargo also leaves `CARGO_MANIFEST_DIR` in the env of
+/// everything it spawns.
+pub fn is_dev_run(exe_in_target: bool, env: &BTreeMap<String, String>) -> bool {
+    exe_in_target || env.contains_key("CARGO_MANIFEST_DIR")
+}
+
 /// `ANYR_TELEMETRY_URL` points the ping at another endpoint (a test server).
 #[cfg(feature = "native")]
 fn endpoint(env: &BTreeMap<String, String>) -> Option<String> {
@@ -197,9 +205,12 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
     let config_flag =
         crate::key::load_config_if_present(&crate::config::resolve_config_path(None, env))
             .and_then(|c| c.telemetry);
-    let dev_build = std::env::current_exe()
-        .map(|exe| crate::autoupdate::is_cargo_target_build(&exe))
-        .unwrap_or(false);
+    let dev_build = is_dev_run(
+        std::env::current_exe()
+            .map(|exe| crate::autoupdate::is_cargo_target_build(&exe))
+            .unwrap_or(false),
+        env,
+    );
     let custom = endpoint(env);
     // A cargo build only stays quiet toward the real PostHog endpoint.
     if !enabled(env, config_flag, dev_build && custom.is_none())
@@ -266,6 +277,16 @@ mod tests {
         }
         assert!(!enabled(&env(&[]), Some(false), false), "config flag");
         assert!(!enabled(&env(&[]), None, true), "dev build");
+    }
+
+    #[test]
+    fn a_binary_copied_out_of_target_under_cargo_test_is_still_a_dev_run() {
+        assert!(is_dev_run(true, &env(&[])));
+        assert!(is_dev_run(
+            false,
+            &env(&[("CARGO_MANIFEST_DIR", "/src/cli")])
+        ));
+        assert!(!is_dev_run(false, &env(&[])));
     }
 
     #[test]
