@@ -496,6 +496,14 @@ pub fn build_tool_env(input: BuildToolEnvInput<'_>) -> BTreeMap<String, String> 
     if input.tool_name == "claude" {
         let anthropic_model = model_id_for_tool("claude", input.model, input.min_context);
         env.insert("ANTHROPIC_MODEL".into(), anthropic_model);
+        // Claude Code reads custom headers from ANTHROPIC_CUSTOM_HEADERS
+        // (newline-separated "Name: value"). Source is the canonical
+        // claude-code app; the title carries the via-anyr-CLI marker so
+        // /data/apps counts Claude Code and anyr CLI (#275).
+        env.insert(
+            "ANTHROPIC_CUSTOM_HEADERS".into(),
+            "X-AnyRouter-Source: claude-code\nX-AnyRouter-Title: Claude Code via anyr CLI".into(),
+        );
         env.insert(
             "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY".into(),
             // Discovery remaps unknown ids (including virtual `anyrouter/*`)
@@ -1057,7 +1065,10 @@ pub fn crush_config(
             "type": "openai-compat",
             "base_url": base_url,
             "api_key": key_ref,
-            "extra_headers": { "X-AnyRouter-App": "crush" },
+            "extra_headers": {
+                "X-AnyRouter-Source": "crush",
+                "X-AnyRouter-Title": "Crush via anyr CLI",
+            },
             "models": models,
         }),
     );
@@ -1448,7 +1459,10 @@ pub fn pi_models_config(
                 "api": "openai-completions",
                 "apiKey": api_key,
                 "authHeader": true,
-                "headers": { "X-AnyRouter-App": "pi" },
+                "headers": {
+                    "X-AnyRouter-Source": "pi",
+                    "X-AnyRouter-Title": "pi via anyr CLI"
+                },
                 "models": models
             }
         }
@@ -1689,7 +1703,7 @@ pub fn provider_args_for(tool_name: &str, profile: &Profile) -> Vec<String> {
         "-c".into(),
         "model_providers.anyrouter.requires_openai_auth=false".into(),
         "-c".into(),
-        "model_providers.anyrouter.http_headers={ \"X-AnyRouter-App\" = \"codex\" }".into(),
+        "model_providers.anyrouter.http_headers={ \"X-AnyRouter-Source\" = \"codex\", \"X-AnyRouter-Title\" = \"Codex via anyr CLI\" }".into(),
     ]
 }
 
@@ -2530,6 +2544,61 @@ mod tests {
         assert_eq!(models[0]["maxTokens"], 524_288);
         assert_eq!(models[1]["id"], "c/d");
         assert!(models[1].get("contextWindow").is_none());
+    }
+
+    #[test]
+    fn launchers_send_source_and_via_anyr_cli_title() {
+        // WHY #275: a launched request must count for the agent and anyr CLI.
+        let pi = pi_models_config("https://anyrouter.dev/api/v1", "k", &[]);
+        assert_eq!(
+            pi["providers"]["anyrouter"]["headers"]["X-AnyRouter-Source"],
+            "pi"
+        );
+        assert_eq!(
+            pi["providers"]["anyrouter"]["headers"]["X-AnyRouter-Title"],
+            "pi via anyr CLI"
+        );
+        let crush = crush_config(
+            None,
+            "https://anyrouter.dev/api/v1",
+            "ANYROUTER_API_KEY",
+            "m",
+            &[],
+            None,
+        );
+        assert_eq!(
+            crush["providers"]["anyrouter"]["extra_headers"]["X-AnyRouter-Source"],
+            "crush"
+        );
+        assert_eq!(
+            crush["providers"]["anyrouter"]["extra_headers"]["X-AnyRouter-Title"],
+            "Crush via anyr CLI"
+        );
+        let codex_args = provider_args_for("codex", &profile());
+        let joined = codex_args.join(" ");
+        assert!(joined.contains("X-AnyRouter-Source"), "{joined}");
+        assert!(joined.contains("Codex via anyr CLI"), "{joined}");
+        let tool = builtin("claude").unwrap();
+        let env = build_tool_env(BuildToolEnvInput {
+            tool_name: "claude",
+            tool: &tool,
+            profile: &profile(),
+            api_key: "sk-ar-v1-secret000000000000",
+            model: "auto",
+            effort: None,
+            context_window: None,
+            min_context: None,
+            model_map: None,
+        });
+        let headers = env.get("ANTHROPIC_CUSTOM_HEADERS").expect("claude headers");
+        assert!(
+            headers.contains("X-AnyRouter-Source: claude-code"),
+            "{headers}"
+        );
+        assert!(
+            headers.contains("X-AnyRouter-Title: Claude Code via anyr CLI"),
+            "{headers}"
+        );
     }
 
     #[test]
