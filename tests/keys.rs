@@ -63,6 +63,21 @@ fn create_sends_scope_fields_and_quiet_prints_only_the_secret() {
 }
 
 #[test]
+fn create_json_prints_one_object_and_does_not_prompt() {
+    // WHY: #253 — scripts parse stdout as JSON; text broke them.
+    let (base, _rx) = serve(vec![created()]);
+    let (code, out, err) = run(&base, &["keys", "create", "ci", "--json"], None);
+    assert_eq!(code, 0, "{out}{err}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["name"], "ci");
+    assert_eq!(v["hash"], "h2");
+    assert_eq!(v["key"], SECRET);
+    assert_eq!(v["agent"], serde_json::Value::Null);
+    assert_eq!(v["saved"], false);
+    assert!(v["account"].as_str().is_some(), "{v}");
+}
+
+#[test]
 fn create_without_flags_sends_only_the_name() {
     let (base, rx) = serve(vec![created()]);
     let (code, out, err) = run(&base, &["keys", "create", "plain", "--quiet"], None);
