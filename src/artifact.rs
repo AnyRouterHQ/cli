@@ -1,8 +1,8 @@
 //! `anyr artifact` — publish a page or folder and manage the result.
 //!
 //!   anyr artifact publish <file|dir> [--title T] [--visibility V] [--id ID] [--label L]
-//!                         [--show-author|--no-show-author]
-//!   anyr artifact ls [--limit N] [--cursor C | --all] | rm <id> | visibility <id> [<v>] [--show-author|--no-show-author]
+//!                         [--show-author|--no-show-author] [--owner-data|--no-owner-data]
+//!   anyr artifact ls [--limit N] [--cursor C | --all] | rm <id> | visibility <id> [<v>] [--show-author|--no-show-author] [--owner-data|--no-owner-data]
 //!
 //! stdout carries the URL (or the server JSON with `--json`); progress and
 //! errors go to stderr. Exit codes: 0 ok, 1 error, 2 usage or version
@@ -38,6 +38,8 @@ pub const FLAGS: &[&str] = &[
     "all",
     "show-author",
     "no-show-author",
+    "owner-data",
+    "no-owner-data",
 ];
 
 pub const VERBS: &[(&str, &str)] = &[
@@ -141,6 +143,7 @@ fn run_inner(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32,
 fn publish(ctx: &Ctx, parsed: &ParsedArgs, path: &str) -> Res<()> {
     let visibility = visibility_flag(parsed)?;
     let show_author = show_author_flag(parsed)?;
+    let owner_data = owner_data_flag(parsed)?;
     let id = match get_string_flag(&parsed.flags, "id") {
         Some(id) => Some(checked_id(&id)?),
         None => None,
@@ -176,6 +179,11 @@ fn publish(ctx: &Ctx, parsed: &ParsedArgs, path: &str) -> Res<()> {
     if let Some(s) = show_author {
         body.insert("show_author".into(), json!(s));
     }
+    // Owner data is the `capabilities.owner_data` capability, so it rides in
+    // the same map the server validates; sent only when asked.
+    if let Some(o) = owner_data {
+        body.insert("capabilities".into(), json!({ "owner_data": o }));
+    }
     let versions_path = match &id {
         Some(id) => {
             let current = current_version(ctx, id)?;
@@ -203,7 +211,7 @@ fn publish(ctx: &Ctx, parsed: &ParsedArgs, path: &str) -> Res<()> {
         }
         (None, None) => unreachable!("a path is either a directory or a file"),
     };
-    print_published(ctx, &done)
+    print_published(ctx, &done, owner_data, visibility.as_deref())
 }
 
 /// `{ "<name>": { "content": ..., "encoding": "utf8" } }` for one file.
@@ -301,7 +309,12 @@ fn verify_unchanged(entry: &Entry) -> Res<()> {
     ))
 }
 
-fn print_published(ctx: &Ctx, done: &Value) -> Res<()> {
+fn print_published(
+    ctx: &Ctx,
+    done: &Value,
+    owner_data: Option<bool>,
+    requested_visibility: Option<&str>,
+) -> Res<()> {
     if ctx.json {
         println!("{}", serde_json::to_string_pretty(done).unwrap_or_default());
         return Ok(());
@@ -317,7 +330,38 @@ fn print_published(ctx: &Ctx, done: &Value) -> Res<()> {
     if let Some(hint) = private_hint(done) {
         eprintln!("{hint}");
     }
+    if let Some(warning) = owner_data_warning(done, owner_data, requested_visibility) {
+        eprintln!("{warning}");
+    }
     Ok(())
+}
+
+/// Owner data on an unlisted or public page shows the owner’s usage to
+/// everyone who can open the link, so say that before the user shares it.
+fn owner_data_warning(
+    done: &Value,
+    requested: Option<bool>,
+    requested_visibility: Option<&str>,
+) -> Option<String> {
+    let on = requested == Some(true)
+        || done
+            .pointer("/capabilities/owner_data")
+            .and_then(Value::as_bool)
+            == Some(true);
+    if !on {
+        return None;
+    }
+    let v = done
+        .get("visibility")
+        .and_then(Value::as_str)
+        .or(requested_visibility)?;
+    if v != "unlisted" && v != "public" {
+        return None;
+    }
+    Some(format!(
+        "{} owner data is on: anyone with the link sees your usage on this page. Use --no-owner-data to hide it.",
+        term::warn("warn:")
+    ))
 }
 
 /// A private link opens a sign-in page for everyone but the owner, so say so
@@ -433,17 +477,18 @@ fn remove(ctx: &Ctx, parsed: &ParsedArgs, id: &str) -> Res<()> {
 fn set_visibility(ctx: &Ctx, parsed: &ParsedArgs, id: &str, v: Option<&str>) -> Res<()> {
     let id = checked_id(id)?;
     let show_author = show_author_flag(parsed)?;
+    let owner_data = owner_data_flag(parsed)?;
     let v = match v {
         Some(v) => Some(canonical_visibility(v).ok_or_else(|| {
             usage(format!(
                 "unknown visibility \"{v}\"; use private, unlisted or public."
             ))
         })?),
-        None if show_author.is_some() => None,
+        None if show_author.is_some() || owner_data.is_some() => None,
         None => {
             let bin = crate::help::invoked_bin();
             return Err(usage(format!(
-                "Usage: {bin} artifact visibility <id> <v> [--show-author|--no-show-author]"
+                "Usage: {bin} artifact visibility <id> <v> [--show-author|--no-show-author] [--owner-data|--no-owner-data]"
             )));
         }
     };
@@ -457,6 +502,9 @@ fn set_visibility(ctx: &Ctx, parsed: &ParsedArgs, id: &str, v: Option<&str>) -> 
     }
     if let Some(s) = show_author {
         body.insert("show_author".into(), json!(s));
+    }
+    if let Some(o) = owner_data {
+        body.insert("capabilities".into(), json!({ "owner_data": o }));
     }
     let (_, out) = call(
         ctx,
@@ -473,6 +521,11 @@ fn set_visibility(ctx: &Ctx, parsed: &ParsedArgs, id: &str, v: Option<&str>) -> 
         match show_author {
             Some(true) => eprintln!("{} {id} shows your name", term::ok("✓")),
             Some(false) => eprintln!("{} {id} hides your name", term::ok("✓")),
+            None => {}
+        }
+        match owner_data {
+            Some(true) => eprintln!("{} {id} shows your usage", term::ok("✓")),
+            Some(false) => eprintln!("{} {id} hides your usage", term::ok("✓")),
             None => {}
         }
     }
@@ -551,7 +604,23 @@ fn check(key: Option<&str>, status: u16, text: &str) -> Res<()> {
         return Err(Fail::new(2, out));
     }
     let mut out = format!("{} HTTP {status}: {message}", term::err("error:"));
-    if status == 401 || status == 403 {
+    let code = value
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    // Owner data needs a signed-in session or an ak_ management key, so an
+    // inference key gets a 403 naming the exact code; show it and point at
+    // the dashboard artifact settings instead of the generic sign-in hint.
+    if matches!(
+        code,
+        "owner_data_requires_owner_session" | "owner_data_visibility_requires_owner_session"
+    ) {
+        out = format!("{} HTTP {status} ({code}): {message}", term::err("error:"));
+        let _ = write!(
+            out,
+            "\nhint: turn it on from the artifact settings in the dashboard with a signed-in session or an ak_ management key."
+        );
+    } else if status == 401 || status == 403 {
         let _ = write!(
             out,
             "\n{} sign in again: {} login",
@@ -582,6 +651,22 @@ fn show_author_flag(parsed: &ParsedArgs) -> Res<Option<bool>> {
     ) {
         (true, true) => Err(usage(
             "--show-author and --no-show-author cannot be used together.",
+        )),
+        (true, false) => Ok(Some(true)),
+        (false, true) => Ok(Some(false)),
+        (false, false) => Ok(None),
+    }
+}
+
+/// `--owner-data` / `--no-owner-data`; None when neither is given. Sends
+/// `capabilities.owner_data` on publish and on the visibility PATCH.
+fn owner_data_flag(parsed: &ParsedArgs) -> Res<Option<bool>> {
+    match (
+        parsed.flag_true("owner-data"),
+        parsed.flag_true("no-owner-data"),
+    ) {
+        (true, true) => Err(usage(
+            "--owner-data and --no-owner-data cannot be used together.",
         )),
         (true, false) => Ok(Some(true)),
         (false, true) => Ok(Some(false)),
@@ -743,5 +828,43 @@ mod tests {
         assert_eq!(check(None, 404, "{}").err().unwrap().code, 3);
         assert_eq!(check(None, 500, "{}").err().unwrap().code, 1);
         assert!(check(None, 201, "{}").is_ok());
+    }
+
+    #[test]
+    fn owner_data_403_names_the_code_and_points_at_the_dashboard() {
+        // WHY: with an inference key the server refuses to switch owner data
+        // on; the user needs to know the dashboard is the only way.
+        let f = check(
+            None,
+            403,
+            r#"{"error":{"code":"owner_data_requires_owner_session","message":"needs a signed-in session"}}"#,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(f.code, 4);
+        assert!(
+            f.message.contains("owner_data_requires_owner_session"),
+            "{}",
+            f.message
+        );
+        assert!(f.message.contains("artifact settings"), "{}", f.message);
+        assert!(!f.message.contains("login"), "{}", f.message);
+    }
+
+    #[test]
+    fn owner_data_warning_only_fires_when_on_and_shared() {
+        let shared = json!({"visibility": "unlisted", "capabilities": {"owner_data": true}});
+        assert!(owner_data_warning(&shared, None, None).is_some());
+        // Off on a shared page: nothing to warn about.
+        let off = json!({"visibility": "unlisted"});
+        assert!(owner_data_warning(&off, Some(false), None).is_none());
+        // On but private: only the owner can open it.
+        let priv_ = json!({"visibility": "private", "capabilities": {"owner_data": true}});
+        assert!(owner_data_warning(&priv_, None, None).is_none());
+        // Requested on and requested shared, but the server did not say.
+        let no_vis = json!({"id": "x"});
+        assert!(owner_data_warning(&no_vis, Some(true), Some("public")).is_some());
+        // Requested on, response silent, requested private: no warn.
+        assert!(owner_data_warning(&no_vis, Some(true), Some("private")).is_none());
     }
 }

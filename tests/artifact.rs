@@ -732,6 +732,162 @@ fn visibility_can_change_only_the_author_setting() {
 }
 
 #[test]
+fn owner_data_is_sent_only_when_a_flag_asks_for_it() {
+    let dir = tmp("ownerdata-pub");
+    // WHY: an older server rejects unknown keys, so no flag means no field.
+    assert!(publish_body(&dir, &[]).get("capabilities").is_none());
+    assert_eq!(
+        publish_body(&dir, &["--owner-data"])["capabilities"]["owner_data"],
+        true
+    );
+    assert_eq!(
+        publish_body(&dir, &["--no-owner-data"])["capabilities"]["owner_data"],
+        false
+    );
+}
+
+#[test]
+fn owner_data_on_a_shared_page_warns_that_everyone_with_the_link_sees_usage() {
+    let dir = tmp("ownerdata-warn");
+    std::fs::write(dir.join("p.html"), "<h1>Hi</h1>").unwrap();
+    let unlisted = r#"{"id":"abc123","version":1,"url":"https://anyrouter.dev/a/abc123","visibility":"unlisted","capabilities":{"owner_data":true}}"#;
+    let (base, _seen) = serve(vec![(201, unlisted.into())]);
+    let p = dir.join("p.html");
+    let (code, out, err) = anyr(
+        &dir,
+        &[
+            "artifact",
+            "publish",
+            p.to_str().unwrap(),
+            "--visibility",
+            "unlisted",
+            "--owner-data",
+            "--base-url",
+            &base,
+            "--key",
+            "sk-ar-test",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.trim(), "https://anyrouter.dev/a/abc123");
+    assert!(
+        err.contains("anyone with the link sees your usage"),
+        "{err}"
+    );
+
+    // Private with owner data on: only the owner can open it, no warning.
+    let (base, _seen) = serve(vec![(201, OK.into())]);
+    let (code, _out, err) = anyr(
+        &dir,
+        &[
+            "artifact",
+            "publish",
+            p.to_str().unwrap(),
+            "--owner-data",
+            "--base-url",
+            &base,
+            "--key",
+            "sk-ar-test",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("anyone with the link"), "{err}");
+}
+
+#[test]
+fn owner_data_inference_key_403_points_at_the_dashboard_and_exits_4() {
+    let dir = tmp("ownerdata-403");
+    std::fs::write(dir.join("p.html"), "<h1>Hi</h1>").unwrap();
+    let (base, _seen) = serve(vec![
+        (
+            403,
+            r#"{"error":{"code":"owner_data_requires_owner_session","message":"Enabling capabilities.owner_data needs your signed-in session"}}"#.into(),
+        ),
+    ]);
+    let p = dir.join("p.html");
+    let (code, _out, err) = anyr(
+        &dir,
+        &[
+            "artifact",
+            "publish",
+            p.to_str().unwrap(),
+            "--owner-data",
+            "--base-url",
+            &base,
+            "--key",
+            "sk-ar-test",
+        ],
+    );
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("owner_data_requires_owner_session"), "{err}");
+    assert!(err.contains("artifact settings"), "{err}");
+}
+
+#[test]
+fn visibility_can_toggle_owner_data_without_a_visibility_word() {
+    let dir = tmp("ownerdata-vis");
+    let (base, seen) = serve(vec![(200, "{}".into()), (200, "{}".into())]);
+    let (code, _, err) = anyr(
+        &dir,
+        &[
+            "artifact",
+            "visibility",
+            "abc123",
+            "--owner-data",
+            "--base-url",
+            &base,
+            "--key",
+            "sk-ar-test",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("shows your usage"), "{err}");
+    let (code, _, err) = anyr(
+        &dir,
+        &[
+            "artifact",
+            "visibility",
+            "abc123",
+            "--no-owner-data",
+            "--base-url",
+            &base,
+            "--key",
+            "sk-ar-test",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen[0].ends_with(r#"{"capabilities":{"owner_data":true}}"#),
+        "{}",
+        seen[0]
+    );
+    assert!(
+        seen[1].ends_with(r#"{"capabilities":{"owner_data":false}}"#),
+        "{}",
+        seen[1]
+    );
+}
+
+#[test]
+fn both_owner_data_flags_together_are_a_usage_error() {
+    let dir = tmp("ownerdata-bad");
+    let (code, _, err) = anyr(
+        &dir,
+        &[
+            "artifact",
+            "visibility",
+            "abc123",
+            "--owner-data",
+            "--no-owner-data",
+            "--key",
+            "sk-ar-test",
+        ],
+    );
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
 fn both_author_flags_or_neither_value_are_usage_errors() {
     let dir = tmp("author-bad");
     let (code, _, err) = anyr(

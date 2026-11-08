@@ -742,6 +742,7 @@ Usage:
   {bin} artifact rm <id>                        Delete one (asks first)
   {bin} artifact visibility <id> <v>            private | unlisted | public
   {bin} artifact visibility <id> --show-author  Show or hide your name on the page
+  {bin} artifact visibility <id> --owner-data   Show or hide your usage on the page
 
 A file (html or md) is sent inline. A folder is uploaded file by file;
 dotfiles, node_modules and .git are skipped. Limits: 5 MB for a single
@@ -756,6 +757,13 @@ Options:
   --label <text>       Version label (with --id)
   --show-author        Show your profile name on the page (default: hidden)
   --no-show-author     Hide your name again
+  --owner-data         Show your usage on the page (capabilities.owner_data).
+                       Turning it on needs a signed-in session or an ak_
+                       management key; with an API key the server refuses
+                       and the dashboard artifact settings are the way on.
+                       When the page is unlisted or public, anyone with the
+                       link sees your usage.
+  --no-owner-data      Hide your usage again
   --limit <n>          ls: rows per page, 1 to 100
   --cursor <c>         ls: continue from a next_cursor
   --all                ls: follow every page (with --json, one merged result)
