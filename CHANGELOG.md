@@ -10,6 +10,13 @@ GitHub Releases use this file as the release notes (full history through that ta
 
 * **cli:** add `anyr decision` for typed `POST /api/v1/decisions` requests with flag or stdin JSON input. Known Decisions models are refused by chat-agent launchers. ([duyet/anyrouter#3550](https://github.com/duyet/anyrouter/issues/3550))
 
+## [0.1.41](https://github.com/AnyRouterHQ/cli/compare/v0.1.40...v0.1.41) (2026-11-08)
+
+
+### Features
+
+* **relay:** detect Ollama models locally and advertise them ([982a5e3](https://github.com/AnyRouterHQ/cli/commit/982a5e3540ba0d561c3705bae385f9036a014d35))
+
 ## [0.1.40](https://github.com/AnyRouterHQ/cli/compare/v0.1.39...v0.1.40) (2026-11-08)
 
 
