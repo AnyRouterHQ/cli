@@ -296,7 +296,7 @@ pub(crate) fn launch(
     }
     if tool_name == "grok" {
         let user_home = grok_user_home(&|k| env.get(k).cloned());
-        prepare_grok_home(&mut env_map, &path, &key, user_home.as_deref())?;
+        prepare_grok_home(&mut env_map, &path, &key, user_home.as_deref(), &model)?;
     }
     let mut args = Vec::new();
     args.extend(provider_args_for(tool_name, &profile));

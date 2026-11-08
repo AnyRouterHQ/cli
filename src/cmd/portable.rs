@@ -910,6 +910,13 @@ pub(crate) fn apply(
             Piece::Mapped { .. } => None,
         })
         .collect();
+    let user_tokens: Vec<String> = pieces
+        .iter()
+        .filter_map(|p| match p {
+            Piece::User(t) => Some(t.clone()),
+            Piece::Mapped { .. } => None,
+        })
+        .collect();
     for piece in &mut pieces {
         let Piece::Mapped {
             tokens,
@@ -922,7 +929,17 @@ pub(crate) fn apply(
         if !words_in_chain.iter().any(|w| w == under.sub) {
             continue;
         }
-        *tokens = under.tokens.iter().map(|t| t.to_string()).collect();
+        // #221: if the user already typed an under-token (e.g. --last),
+        // adding it again gives `exec resume --last --last`.
+        if under
+            .tokens
+            .iter()
+            .any(|t| user_tokens.iter().any(|u| u == t))
+        {
+            *tokens = Vec::new();
+        } else {
+            *tokens = under.tokens.iter().map(|t| t.to_string()).collect();
+        }
         if let Some(reason) = under.note {
             notices.push(format!(
                 "{agent} {} has {reason}; ignoring --{typed}.",
@@ -1232,6 +1249,15 @@ mod tests {
         assert_eq!(
             run("codex", &["exec", "--json", "--continue", "fix it"]).args,
             s(&["exec", "resume", "--last", "--json", "fix it"])
+        );
+    }
+
+    #[test]
+    fn codex_resume_does_not_add_last_twice_when_user_typed_it() {
+        // WHY #221: --print --resume --last gave exec resume --last --last.
+        assert_eq!(
+            run("codex", &["--print", "--resume", "--last", "fix it"]).args,
+            s(&["exec", "resume", "--last", "fix it"])
         );
     }
 
