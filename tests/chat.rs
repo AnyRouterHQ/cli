@@ -434,26 +434,24 @@ mod stream {
     #[cfg(unix)]
     fn pty() -> (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {
         use std::os::fd::FromRawFd;
-        let (mut m, mut s) = (0, 0);
-        let rc = unsafe {
-            libc::openpty(
-                &mut m,
-                &mut s,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
+        // Open both ends close-on-exec at open time (#223). openpty has no
+        // such flag, and a parallel test could spawn a child in the window
+        // between openpty and the fcntl fixup, leaking the pty past EOF.
+        let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
+        assert_ne!(master, -1, "posix_openpt");
+        assert_eq!(unsafe { libc::grantpt(master) }, 0, "grantpt");
+        assert_eq!(unsafe { libc::unlockpt(master) }, 0, "unlockpt");
+        let name = unsafe { libc::ptsname(master) };
+        assert!(!name.is_null(), "ptsname");
+        let slave_name = unsafe { std::ffi::CStr::from_ptr(name) }.to_owned();
+        let slave = unsafe {
+            libc::open(
+                slave_name.as_ptr(),
+                libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
             )
         };
-        assert_eq!(rc, 0);
-        // openpty does not set close-on-exec. Without it, an `anyr` spawned
-        // by a parallel test inherits this pty and holds it open, so the
-        // master would not see EOF when this test's child exits.
-        for fd in [m, s] {
-            assert_ne!(
-                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
-                -1
-            );
-        }
+        assert_ne!(slave, -1, "open slave");
+        let (m, s) = (master, slave);
         unsafe {
             (
                 std::os::fd::OwnedFd::from_raw_fd(m),

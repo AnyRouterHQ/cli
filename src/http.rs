@@ -296,25 +296,33 @@ pub fn http_patch(
     into_status_body(req.send_string(json_body.unwrap_or("{}")))
 }
 
-/// PUT a local file as the raw request body, streamed from disk.
+/// PUT a local file as the raw request body, buffered from disk.
 #[cfg(feature = "native")]
 pub fn http_put_file(
     url: &str,
     api_key: Option<&str>,
     path: &std::path::Path,
 ) -> Result<(u16, String), String> {
-    let file =
+    let mut file =
         std::fs::File::open(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
     let len = file
         .metadata()
         .map_err(|e| format!("Could not stat {}: {e}", path.display()))?
         .len();
+    // Buffer first, then check the size (#223). A file that shrinks or grows
+    // mid-upload must fail here as "changed while publishing" instead of
+    // sending a short body and waiting out the server's timeout.
+    let mut body = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut body)
+        .map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    if body.len() as u64 != len {
+        return Err(format!("File {} changed while publishing", path.display()));
+    }
+    let len = body.len();
     let req = with_auth(agent().put(url), api_key)
         .set("Content-Type", "application/octet-stream")
         .set("Content-Length", &len.to_string());
-    // Send exactly the bytes promised: a file that grows mid-upload would
-    // otherwise run past Content-Length into the connection.
-    into_status_body(req.send(std::io::Read::take(file, len)))
+    into_status_body(req.send(std::io::Cursor::new(body)))
 }
 
 /// POST the native Decisions envelope and return the structured response.

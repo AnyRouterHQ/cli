@@ -1142,15 +1142,7 @@ fn update_is_upgrade_alias() {
 
 #[test]
 fn update_beta_persists_channel_and_selects_prerelease() {
-    let home = std::env::temp_dir().join(format!(
-        "anyr-cli-update-beta-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&home).expect("home");
+    let home = common::unique_temp_dir("anyr-cli-update-beta");
     let (code, stdout, stderr) = {
         let out = anyr()
             .args(["update", "--beta", "--check"])
@@ -1813,15 +1805,7 @@ fn upgrade_auto_is_quiet_when_up_to_date() {
 
 #[test]
 fn update_prints_from_to_channel_and_success() {
-    let home = std::env::temp_dir().join(format!(
-        "anyr-cli-update-ux-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&home).expect("home");
+    let home = common::unique_temp_dir("anyr-cli-update-ux");
     let out = anyr()
         .args(["update"])
         .env("ANYROUTER_HOME", &home)
@@ -1851,15 +1835,7 @@ fn update_prints_from_to_channel_and_success() {
 #[cfg(unix)]
 #[test]
 fn update_spinner_animates_on_tty() {
-    let home = std::env::temp_dir().join(format!(
-        "anyr-cli-update-pty-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&home).expect("home");
+    let home = common::unique_temp_dir("anyr-cli-update-pty");
     let helper = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".agents/skills/verify-anyr/helpers/pty-anyr.py");
     let transcript = home.join("tty.txt");
