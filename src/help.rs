@@ -746,8 +746,9 @@ Usage:
 
 A file (html or md) is sent inline. A folder is uploaded file by file;
 dotfiles, node_modules and .git are skipped. Limits: 5 MB for a single
-file; a folder takes 200 files and 100 MB per publish, 25 MB per image
-or other asset, 5 MB per page or source file.
+file; a folder takes 200 files and 100 MB per publish. The per-file cap
+depends on your plan: 10 MB Free, 25 MB Go, 50 MB Pro, and 5 MB for a
+page or source file on every plan.
 
 Options:
   --title <text>       Page title

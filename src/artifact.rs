@@ -64,9 +64,10 @@ fn canonical_visibility(v: &str) -> Option<&'static str> {
 }
 /// A single file is sent inline in one JSON body, so it keeps the inline cap.
 const MAX_INLINE_BYTES: u64 = 5 * 1024 * 1024;
-/// Folder caps match the server: 25 MB per asset (the server holds page and
-/// source files to 5 MB and says so), 200 files and 100 MB per publish.
-const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;
+/// Largest per-file cap of any plan (Pro 50 MB). The server enforces each
+/// plan's own cap (Free 10 MB, Go 25 MB, Pro 50 MB) and the 5 MB page/source
+/// cap, so the client only rejects what no plan can take.
+const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_FILES: usize = 200;
 const MAX_TOTAL_BYTES: u64 = 100 * 1024 * 1024;
 
@@ -604,7 +605,7 @@ fn check(key: Option<&str>, status: u16, text: &str) -> Res<()> {
         return Err(Fail::new(2, out));
     }
     let mut out = format!("{} HTTP {status}: {message}", term::err("error:"));
-    let code = value
+    let err_code = value
         .pointer("/error/code")
         .and_then(Value::as_str)
         .unwrap_or("");
@@ -612,23 +613,35 @@ fn check(key: Option<&str>, status: u16, text: &str) -> Res<()> {
     // inference key gets a 403 naming the exact code; show it and point at
     // the dashboard artifact settings instead of the generic sign-in hint.
     if matches!(
-        code,
+        err_code,
         "owner_data_requires_owner_session" | "owner_data_visibility_requires_owner_session"
     ) {
-        out = format!("{} HTTP {status} ({code}): {message}", term::err("error:"));
+        out = format!(
+            "{} HTTP {status} ({err_code}): {message}",
+            term::err("error:")
+        );
         let _ = write!(
             out,
             "\nhint: turn it on from the artifact settings in the dashboard with a signed-in session or an ak_ management key."
         );
     } else if status == 401 || status == 403 {
-        let _ = write!(
-            out,
-            "\n{} sign in again: {} login",
-            term::dim("hint:"),
-            crate::help::invoked_bin()
-        );
+        // A quota refusal names the plan, the limit and current usage; show it
+        // as the server wrote it instead of calling it an auth failure.
+        if err_code != "quota_exceeded" {
+            let _ = write!(
+                out,
+                "\n{} sign in again: {} login",
+                term::dim("hint:"),
+                crate::help::invoked_bin()
+            );
+        }
     }
-    Err(Fail::new(exit_for(status), out))
+    let exit = if err_code == "quota_exceeded" && status == 403 {
+        crate::exit::ERROR
+    } else {
+        exit_for(status)
+    };
+    Err(Fail::new(exit, out))
 }
 
 fn visibility_flag(parsed: &ParsedArgs) -> Res<Option<String>> {
@@ -866,5 +879,25 @@ mod tests {
         assert!(owner_data_warning(&no_vis, Some(true), Some("public")).is_some());
         // Requested on, response silent, requested private: no warn.
         assert!(owner_data_warning(&no_vis, Some(true), Some("private")).is_none());
+    }
+
+    #[test]
+    fn quota_exceeded_shows_the_server_message_as_is() {
+        // WHY #250: per-plan refusals name the plan and limit; the sign-in hint
+        // would bury them and read as an auth failure.
+        let f = check(
+            None,
+            403,
+            r#"{"error":{"code":"quota_exceeded","message":"Free plan is stored at 100 MB"}}"#,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(f.code, 1);
+        assert!(
+            f.message.contains("Free plan is stored at 100 MB"),
+            "{}",
+            f.message
+        );
+        assert!(!f.message.contains("sign in"), "{}", f.message);
     }
 }
