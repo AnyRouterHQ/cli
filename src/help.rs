@@ -25,7 +25,8 @@ are min-context floors on auto (not catalog SKUs).
   --command-path <path> Explicit path to the agent executable
   --install             Install a missing agent without prompting (implied on a TTY)
   --config <path>       Override the config file path
-  --dry-run             Print the child command and env (secrets redacted)
+  --dry-run             Print the child command and env (secrets redacted);
+                        with --json, the plan as one JSON object
   --json                anyr's own output as JSON; never sent to the agent
                         (for the agent's own --json, put it after `--`)
   --no-mcp              Don't connect the AnyRouter MCP gateway (or its

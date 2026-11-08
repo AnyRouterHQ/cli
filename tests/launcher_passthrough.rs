@@ -54,11 +54,24 @@ fn dry_run(agent: &str, extra: &[&str]) -> DryRun {
         .output()
         .expect("spawn anyr");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    let args = stdout
-        .lines()
-        .find_map(|l| l.strip_prefix("args: "))
-        .map(|json| serde_json::from_str(json).expect("args line is JSON"))
-        .unwrap_or_default();
+    // `--dry-run --json` prints one JSON object; the text form prints an
+    // `args: ` line. Accept both so the --json ownership checks below keep
+    // meaning something instead of vacuously passing on an empty vec.
+    let args = if let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+        if let Some(arr) = v["args"].as_array() {
+            arr.iter()
+                .map(|a| a.as_str().unwrap_or_default().to_string())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("args: "))
+            .map(|json| serde_json::from_str(json).expect("args line is JSON"))
+            .unwrap_or_default()
+    };
     DryRun {
         files: std::fs::read_to_string(home.join("crush").join("crush.json")).unwrap_or_default(),
         code: out.status.code().unwrap_or(1),

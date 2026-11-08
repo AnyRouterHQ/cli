@@ -176,7 +176,8 @@ pub(crate) fn tui_dump_settings(
 
 /// The flags `anyr <agent>` keeps for itself. Every other flag goes to the
 /// agent unchanged and in order; `--` sends the rest raw, so an agent flag
-/// spelled like one of these can still reach it.
+/// spelled like one of these can still reach it. `--json` is anyr's own
+/// output flag (never sent to the agent; `-- --json` reaches it).
 pub(crate) const LAUNCH_FLAGS: &[&str] = &[
     "model",
     "effort",
@@ -189,6 +190,7 @@ pub(crate) const LAUNCH_FLAGS: &[&str] = &[
     "timeout",
     "plaintext",
     "dry-run",
+    "json",
     "yes",
     "ok",
     "device",
@@ -219,6 +221,7 @@ const CLAUDE_LAUNCH_FLAGS: &[&str] = &[
     "timeout",
     "plaintext",
     "dry-run",
+    "json",
     "yes",
     "ok",
     "device",

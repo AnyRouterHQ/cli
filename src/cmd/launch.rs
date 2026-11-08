@@ -4,8 +4,8 @@ use crate::auth::acquire_api_key;
 use crate::config::{write_config, DEFAULT_PROFILE};
 use crate::install::{ensure_tool_installed, Install};
 use crate::key::{
-    load_config_if_present, profile_for_agent, resolve_base_url, resolve_launch_key,
-    resolve_launch_model, KeySource,
+    load_config_if_present, mask_api_key, mask_secrets, profile_for_agent, resolve_base_url,
+    resolve_launch_key, resolve_launch_model, KeySource,
 };
 use crate::parse::{get_string_flag, ParsedArgs};
 use crate::spawn::{
@@ -177,6 +177,79 @@ pub(crate) fn run_launch(
     env: &BTreeMap<String, String>,
 ) -> Result<i32, String> {
     launch(tool_name, parsed, env, None)
+}
+
+/// `--json` (or `ANYR_OUTPUT=json`) was asked for, so `--dry-run` must print
+/// one JSON object instead of the text form. `commands::run` already folds
+/// the env var into the parsed `json` flag, but direct callers may not.
+fn dry_run_json_requested(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> bool {
+    parsed.flag_true("json")
+        || env
+            .get("ANYR_OUTPUT")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("json"))
+}
+
+/// Env for the JSON plan: every value goes through the text dry-run's
+/// `redact_value` (name-based) and then `mask_secrets` (catches a full key
+/// embedded in a larger string, e.g. a JSON config value) so nothing leaks.
+fn redacted_env(env_map: &BTreeMap<String, String>) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    for (k, v) in env_map {
+        out.insert(
+            k.clone(),
+            serde_json::Value::String(mask_secrets(&crate::spawn::redact_value(k, v))),
+        );
+    }
+    out
+}
+
+struct DryRunJsonInput<'a> {
+    tool_name: &'a str,
+    command: &'a str,
+    args: &'a [String],
+    env_map: &'a BTreeMap<String, String>,
+    model: &'a str,
+    base: &'a str,
+    key: &'a str,
+    effort: Option<&'a str>,
+    context_window: Option<i64>,
+    unset: &'a [&'a str],
+    mcp_summary: &'a str,
+    fx_preview: Option<&'a str>,
+    agent_mode: bool,
+}
+
+/// The settled plan as one JSON object: `command`, `args`, redacted `env`,
+/// `model`, `base_url`, masked key, and the decision fields an agent can act
+/// on (`agent_mode`, `mcp`, `effort`, `context_window`, `unset`). Printed on
+/// a single line so `jq` and friends get one document, nothing else.
+fn render_dry_run_json(input: &DryRunJsonInput<'_>) -> String {
+    let masked_args: Vec<serde_json::Value> = input
+        .args
+        .iter()
+        .map(|a| serde_json::Value::String(mask_secrets(a)))
+        .collect();
+    let masked_command = mask_secrets(input.command);
+    let masked_mcp = mask_secrets(input.mcp_summary);
+    let mut obj = serde_json::json!({
+        "agent": input.tool_name,
+        "command": masked_command,
+        "args": masked_args,
+        "env": redacted_env(input.env_map),
+        "model": mask_secrets(input.model),
+        "base_url": mask_secrets(input.base),
+        "key_masked": mask_api_key(Some(input.key)),
+        "effort": input.effort,
+        "context_window": input.context_window,
+        "unset": input.unset,
+        "dry_run": true,
+        "mcp": masked_mcp,
+        "agent_mode": input.agent_mode,
+    });
+    if let Some(preview) = input.fx_preview {
+        obj["fx_settings"] = serde_json::Value::String(mask_secrets(preview));
+    }
+    serde_json::to_string(&obj).unwrap_or_else(|_| "{}".into())
 }
 
 /// Headless one-shot run for `anyr delegate`: same gateway env as a normal
@@ -443,6 +516,32 @@ pub(crate) fn launch(
                     crate::launch_cache::opencode_major(spot.dir, &path),
                 );
             }
+        }
+        if dry_run_json_requested(parsed, env) {
+            let fx_preview = if let Some((settings, connection)) = &fx_settings {
+                Some(prepare_fx_settings(settings, connection, true)?)
+            } else {
+                None
+            };
+            println!(
+                "{}",
+                render_dry_run_json(&DryRunJsonInput {
+                    tool_name,
+                    command: &command,
+                    args: &args,
+                    env_map: &env_map,
+                    model: &model,
+                    base: &base,
+                    key: &key,
+                    effort: effort.as_deref(),
+                    context_window: resolved.context_window,
+                    unset,
+                    mcp_summary: &mcp.summary,
+                    fx_preview: fx_preview.as_deref(),
+                    agent_mode: term::agent_mode(parsed, env),
+                })
+            );
+            return Ok(0);
         }
         println!("{}", render_dry_run(&command, &args, &env_map));
         println!("{}", mcp.summary);
