@@ -1,0 +1,265 @@
+{
+  "_comment": "Shared by the dashboard (apps/dashboard key-audit.test.ts) and the anyr CLI `keys audit` suite (anyrouter-dev/cli). Change an expectation here and both suites must fail until the rules match. Keys are metadata in, suggestions out; a key's label is sk-ar-v1-...<tail> and its id is key_<tail>.",
+  "now": "2026-10-27T12:00:00Z",
+  "cases": [
+    {
+      "name": "never-used key is flagged only once it is 7 days old",
+      "keys": [
+        {
+          "name": "old-unused",
+          "tail": "aaaa",
+          "origin": null,
+          "created_at": "2026-10-19T12:00:00Z",
+          "last_used_at": null,
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "new-unused",
+          "tail": "bbbb",
+          "origin": null,
+          "created_at": "2026-10-21T12:00:00Z",
+          "last_used_at": null,
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        }
+      ],
+      "expected": [
+        {
+          "name": "old-unused",
+          "reason": {
+            "code": "never_used",
+            "ageDays": 8
+          }
+        }
+      ]
+    },
+    {
+      "name": "key idle 30 days is flagged unless it has requests in the window",
+      "keys": [
+        {
+          "name": "idle",
+          "tail": "aaaa",
+          "origin": null,
+          "created_at": "2026-01-01T00:00:00Z",
+          "last_used_at": "2026-09-26T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "recent",
+          "tail": "bbbb",
+          "origin": null,
+          "created_at": "2026-01-01T00:00:00Z",
+          "last_used_at": "2026-09-30T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "busy",
+          "tail": "cccc",
+          "origin": null,
+          "created_at": "2026-01-01T00:00:00Z",
+          "last_used_at": "2026-09-01T00:00:00Z",
+          "real_usage_monthly_requests": 40,
+          "disabled": false
+        }
+      ],
+      "expected": [
+        {
+          "name": "idle",
+          "reason": {
+            "code": "unused_30d",
+            "idleDays": 31
+          }
+        }
+      ]
+    },
+    {
+      "name": "the key making the request is suggested when not current",
+      "keys": [
+        {
+          "name": "this-machine",
+          "tail": "aaaa",
+          "origin": null,
+          "created_at": "2026-01-01T00:00:00Z",
+          "last_used_at": null,
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        }
+      ],
+      "expected": [
+        {
+          "name": "this-machine",
+          "reason": {
+            "code": "never_used",
+            "ageDays": 299
+          }
+        }
+      ]
+    },
+    {
+      "name": "the key making the request is never suggested",
+      "currentKeyId": "key_aaaa",
+      "keys": [
+        {
+          "name": "this-machine",
+          "tail": "aaaa",
+          "origin": null,
+          "created_at": "2026-01-01T00:00:00Z",
+          "last_used_at": null,
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "an older device-login key with monthly requests is kept",
+      "keys": [
+        {
+          "name": "studio anyr 2026-10-20",
+          "tail": "aaaa",
+          "origin": "cli:cli",
+          "created_at": "2026-10-20T00:00:00Z",
+          "last_used_at": "2026-10-24T00:00:00Z",
+          "real_usage_monthly_requests": 5,
+          "disabled": false
+        },
+        {
+          "name": "studio anyr 2026-10-25",
+          "tail": "bbbb",
+          "origin": "cli:cli",
+          "created_at": "2026-10-25T00:00:00Z",
+          "last_used_at": "2026-10-27T00:00:00Z",
+          "real_usage_monthly_requests": 9,
+          "disabled": false
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "an older device-login key is flagged once a newer one replaced it",
+      "keys": [
+        {
+          "name": "studio anyr 2026-10-20",
+          "tail": "aaaa",
+          "origin": "cli:cli",
+          "created_at": "2026-10-20T00:00:00Z",
+          "last_used_at": "2026-10-24T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "studio anyr 2026-10-25",
+          "tail": "bbbb",
+          "origin": "cli:cli",
+          "created_at": "2026-10-25T00:00:00Z",
+          "last_used_at": "2026-10-27T00:00:00Z",
+          "real_usage_monthly_requests": 9,
+          "disabled": false
+        }
+      ],
+      "expected": [
+        {
+          "name": "studio anyr 2026-10-20",
+          "reason": {
+            "code": "replaced_on_device",
+            "device": "studio",
+            "newerName": "studio anyr 2026-10-25"
+          }
+        }
+      ]
+    },
+    {
+      "name": "an older key still used after the newer one was made is kept (shared host name)",
+      "keys": [
+        {
+          "name": "macbook anyr 2026-10-20",
+          "tail": "aaaa",
+          "origin": "cli:cli",
+          "created_at": "2026-10-20T00:00:00Z",
+          "last_used_at": "2026-10-26T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "macbook anyr 2026-10-25",
+          "tail": "bbbb",
+          "origin": "cli:cli",
+          "created_at": "2026-10-25T00:00:00Z",
+          "last_used_at": null,
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "legacy CLI names and dashboard keys are never grouped by device",
+      "keys": [
+        {
+          "name": "AnyRouter CLI",
+          "tail": "aaaa",
+          "origin": "cli:cli",
+          "created_at": "2026-10-20T00:00:00Z",
+          "last_used_at": "2026-10-21T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "AnyRouter CLI",
+          "tail": "bbbb",
+          "origin": "cli:cli",
+          "created_at": "2026-10-25T00:00:00Z",
+          "last_used_at": "2026-10-26T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "studio anyr 2026-10-20",
+          "tail": "cccc",
+          "origin": null,
+          "created_at": "2026-10-20T00:00:00Z",
+          "last_used_at": "2026-10-21T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        },
+        {
+          "name": "studio anyr 2026-10-25",
+          "tail": "dddd",
+          "origin": null,
+          "created_at": "2026-10-25T00:00:00Z",
+          "last_used_at": "2026-10-26T00:00:00Z",
+          "real_usage_monthly_requests": 0,
+          "disabled": false
+        }
+      ],
+      "expected": []
+    }
+  ],
+  "deviceOf": [
+    {
+      "name": "studio anyr 2026-10-27",
+      "device": "studio"
+    },
+    {
+      "name": "AnyRouter CLI",
+      "device": null
+    },
+    {
+      "name": "ci anyr later",
+      "device": null
+    }
+  ],
+  "keyLast4": [
+    {
+      "label": "sk-ar-v1-...x9K2",
+      "last4": "x9K2"
+    },
+    {
+      "label": "sk-ar-v1-abcd",
+      "last4": ""
+    }
+  ]
+}

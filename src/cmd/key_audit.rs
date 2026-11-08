@@ -504,4 +504,113 @@ mod tests {
         assert!(text.contains("keys revoke aaaa"), "{text}");
         assert!(!text.contains("sk-ar-v1-"), "{text}");
     }
+
+    #[test]
+    fn shared_fixture_cases_match_the_dashboard_rules() {
+        // WHY #244: one fixture drives both suites so the rules cannot drift.
+        let raw = include_str!("../../tests/fixtures/key-audit-cases.json");
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(raw.as_bytes());
+        let hex: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            hex, "6ef07146e0a1e56bdf771dd31d6ff802d3cd14183d6fabfd23d1f56c18645306",
+            "fixture changed; re-vendor tests/fixtures/key-audit-cases.json and update the hash"
+        );
+        let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let now = crate::civil::parse_utc(fixture["now"].as_str().unwrap()).unwrap();
+        assert_eq!(now, NOW);
+        for case in fixture["cases"].as_array().unwrap() {
+            let rows: Vec<RemoteKey> = case["keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| {
+                    let tail = k["tail"].as_str().unwrap();
+                    RemoteKey {
+                        name: k["name"].as_str().unwrap().into(),
+                        hash: format!("hash_{tail}"),
+                        masked: format!("sk-ar-v1-...{tail}"),
+                        created_at: Some(k["created_at"].as_str().unwrap().into()),
+                        last_used_at: k["last_used_at"].as_str().map(str::to_string),
+                        active: !k["disabled"].as_bool().unwrap_or(false),
+                        id: format!("key_{tail}"),
+                        origin: k["origin"].as_str().map(str::to_string),
+                        requests_30d: k["real_usage_monthly_requests"].as_u64().unwrap_or(0),
+                    }
+                })
+                .collect();
+            let current_secret = case["currentKeyId"].as_str().map(|id| {
+                let tail = id.strip_prefix("key_").unwrap_or(id);
+                format!("sk-ar-v1-test-{tail}")
+            });
+            let current = current_secret.as_deref();
+            let got: Vec<(String, String)> = suggest_removals(&rows, current, now)
+                .into_iter()
+                .map(|s| (s.row.name, s.reason.code().to_string()))
+                .collect();
+            let want: Vec<(String, String)> = case["expected"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| {
+                    (
+                        e["name"].as_str().unwrap().to_string(),
+                        e["reason"]["code"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            assert_eq!(got, want, "case {}", case["name"].as_str().unwrap_or("?"));
+            // The numeric and device fields must match too, not just the code.
+            for s in suggest_removals(&rows, current, now) {
+                let exp = case["expected"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|e| e["name"].as_str() == Some(&s.row.name))
+                    .unwrap();
+                match s.reason {
+                    Reason::NeverUsed { age_days } => {
+                        assert_eq!(age_days, exp["reason"]["ageDays"].as_i64().unwrap_or(-1))
+                    }
+                    Reason::Unused { idle_days } => {
+                        assert_eq!(idle_days, exp["reason"]["idleDays"].as_i64().unwrap_or(-1))
+                    }
+                    Reason::ReplacedOnDevice { device, newer } => {
+                        assert_eq!(
+                            device,
+                            exp["reason"]["device"].as_str().unwrap_or(""),
+                            "case {}",
+                            case["name"].as_str().unwrap_or("?")
+                        );
+                        // Rust reports the newer key by its last four; the
+                        // fixture names it in full. They must be the same key.
+                        let want_name = exp["reason"]["newerName"].as_str().unwrap();
+                        let want_row = rows.iter().find(|r| r.name == want_name).unwrap();
+                        assert_eq!(newer, short_ref(want_row));
+                    }
+                }
+            }
+        }
+        for d in fixture["deviceOf"].as_array().unwrap() {
+            assert_eq!(
+                device_of(d["name"].as_str().unwrap()),
+                d["device"].as_str(),
+                "deviceOf {:?}",
+                d["name"]
+            );
+        }
+        for f in fixture["keyLast4"].as_array().unwrap() {
+            assert_eq!(
+                last4(f["label"].as_str().unwrap()),
+                f["last4"].as_str().unwrap_or(""),
+                "keyLast4 {:?}",
+                f["label"]
+            );
+        }
+    }
 }
