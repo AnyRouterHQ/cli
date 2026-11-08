@@ -906,6 +906,61 @@ fn run_rollback(env: &BTreeMap<String, String>) -> Result<i32, String> {
     Ok(0)
 }
 
+/// Remember why the last update check failed so `anyr update --status`
+/// shows it. Manual `anyr update` never prints it (like the background
+/// stager, failures stay silent), but it must stay diagnosable.
+fn record_update_error(env: &BTreeMap<String, String>, err: &str) {
+    let mut state = UpdateState::load(env);
+    state.last_error = Some(err.to_string());
+    state.save(env);
+}
+
+/// The up-to-date output for the requested mode. Used when the releases
+/// listing itself fails: update checks are best-effort, so a weird page
+/// (rate limit, proxy, markup change) keeps silent like "no new version".
+fn print_up_to_date(parsed: &ParsedArgs, channel: Channel) -> i32 {
+    if wants_check(parsed) && parsed.flag_true("json") {
+        let current = Release {
+            tag_name: VERSION.to_string(),
+            prerelease: false,
+            assets: Vec::new(),
+        };
+        let body = serde_json::json!({
+            "current": VERSION,
+            "latest": VERSION,
+            "channel": channel.as_str(),
+            "status": "up_to_date",
+            "asset": release_asset_url(&current, current_os(), current_arch()),
+        });
+        println!("{body}");
+        return 0;
+    }
+    if wants_check(parsed) {
+        print_version_report(channel, VERSION);
+        let current = Release {
+            tag_name: VERSION.to_string(),
+            prerelease: false,
+            assets: Vec::new(),
+        };
+        println!(
+            "{}",
+            field(
+                "asset",
+                release_asset_url(&current, current_os(), current_arch())
+            )
+        );
+        println!("{}", field("status", term::ok("up to date")));
+        return 0;
+    }
+    println!(
+        "{} Already up to date ({}, {} channel)",
+        term::ok("✔"),
+        display_tag(VERSION),
+        channel.as_str()
+    );
+    0
+}
+
 pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, String> {
     if parsed.flag_true("auto") {
         return run_auto(parsed, env);
@@ -934,7 +989,20 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
     }
     let channel = resolve_channel(parsed, env)?;
     let fixture = fixture_path(parsed, env);
-    let releases = load_releases(fixture.as_deref(), env)?;
+    let releases = match load_releases(fixture.as_deref(), env) {
+        Ok(releases) => releases,
+        Err(err) => {
+            // Listing releases is best-effort: a weird page (rate limit,
+            // markup change, proxy) must not break the command. Stay
+            // silent like "no new version"; the failure is kept for
+            // `anyr update --status`. Fixture errors stay loud.
+            if fixture.is_some() {
+                return Err(err);
+            }
+            record_update_error(env, &err);
+            return Ok(print_up_to_date(parsed, channel));
+        }
+    };
     let os = current_os();
     let arch = current_arch();
     let asset = asset_name(os, arch);

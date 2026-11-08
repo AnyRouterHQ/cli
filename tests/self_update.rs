@@ -92,6 +92,42 @@ fn serve(releases: Vec<Release>, listing_delay: Duration) -> MockRelease {
     MockRelease { base, hits }
 }
 
+/// Serves a weird non-JSON body for `/releases.json` (a GitHub page variant
+/// no parser understands), to prove a bad listing stays silent.
+fn serve_garbage_listing() -> MockRelease {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let hits = Arc::new(AtomicUsize::new(0));
+    let h = Arc::clone(&hits);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            h.fetch_add(1, Ordering::SeqCst);
+            thread::spawn(move || {
+                let mut line = String::new();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                if reader.read_line(&mut line).is_err() {
+                    return;
+                }
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header == "\r\n" {
+                        break;
+                    }
+                }
+                let body = b"<html>weird page, no releases here</html>";
+                let head = format!(
+                    "HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body);
+            });
+        }
+    });
+    MockRelease { base, hits }
+}
+
 fn route(path: &str, base: &str, releases: &[Release], delay: Duration) -> (u16, Vec<u8>) {
     let asset = asset();
     if path == "/releases.json" {
@@ -305,6 +341,47 @@ fn check_never_blocks_the_command() {
     // The detached check still runs to completion afterwards.
     let state = install.wait_checked();
     assert_eq!(state["pending_version"], "999.0.0", "{state}");
+}
+
+#[test]
+fn update_listing_failure_stays_silent_like_no_new_version() {
+    // WHY: a weird release page (rate limit, markup change, proxy) must not
+    // break `anyr update` with a hard error. It stays silent like "no new
+    // version"; the failure is kept for `anyr update --status`.
+    let mock = serve_garbage_listing();
+    let install = Install::new();
+    let out = install.run(&mock, &["update", "--beta"], &[]);
+    assert!(
+        out.status.success(),
+        "update failed on a bad listing: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Already up to date"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("error"), "{stderr}");
+    let state = install.state();
+    assert!(
+        state["last_error"].as_str().unwrap_or_default().len() > 0,
+        "{state}"
+    );
+    assert_eq!(fs::read(&install.bin).unwrap(), install.original);
+}
+
+#[test]
+fn update_check_listing_failure_stays_silent_like_no_new_version() {
+    let mock = serve_garbage_listing();
+    let install = Install::new();
+    let out = install.run(&mock, &["update", "--check", "--json"], &[]);
+    assert!(
+        out.status.success(),
+        "check failed on a bad listing: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["status"], "up_to_date", "{body}");
+    assert_eq!(body["current"], env!("CARGO_PKG_VERSION"), "{body}");
+    assert_eq!(body["latest"], env!("CARGO_PKG_VERSION"), "{body}");
 }
 
 #[test]
