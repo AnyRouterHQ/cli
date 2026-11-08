@@ -1,11 +1,17 @@
-//! Anonymous install and update ping to PostHog.
+//! Anonymous install, update and daily ping to PostHog.
 //!
-//! Sent at most once per install and once per version change, so a count of
-//! `cli_install` and `cli_update` events answers "how many installs, on which
-//! versions". It carries a random install id, the version, the OS and the CPU
-//! architecture. It never carries a key, a path, a hostname, an IP address or a
-//! prompt, and it asks PostHog not to build a person profile or look up a
-//! location.
+//! Sent at most once per install, once per version change, and at most
+//! once per UTC day, so a count of `cli_install`, `cli_update` and
+//! `cli_daily` events answers "how many installs, on which versions, and
+//! how many active users per day". It carries a random install id, the
+//! version, the OS and the CPU architecture. It never carries a key, a
+//! path, a hostname, an IP address, a prompt or a subcommand, and it
+//! asks PostHog not to build a person profile or look up a location.
+//!
+//! The install and update pings send synchronously (they are rare). The
+//! daily ping is handed to a detached `anyr __telemetry-daily` child that
+//! reads the payload from stdin, so the first command of each day never
+//! waits on the network.
 //!
 //! On by default. Off with `DO_NOT_TRACK=1`, `ANYR_NO_TELEMETRY=1` or
 //! `telemetry: false` in the config file. It also stays off in CI, in dev
@@ -30,12 +36,16 @@ const STATE_FILE: &str = "telemetry.json";
 #[cfg(feature = "native")]
 const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-pub const NOTICE: &str = "anyr sends one anonymous ping per install or update (random id, version, OS, CPU). Turn it off with ANYR_NO_TELEMETRY=1, DO_NOT_TRACK=1 or `telemetry: false` in the config.";
+pub const NOTICE: &str = "anyr sends one anonymous ping per install, per update or per day (random id, version, OS, CPU). Turn it off with ANYR_NO_TELEMETRY=1, DO_NOT_TRACK=1 or `telemetry: false` in the config.";
+
+/// Seconds in one UTC day; the daily ping fires when the day moves on.
+pub const SECS_PER_DAY: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
     Install,
     Update { from: String },
+    Daily,
 }
 
 impl Kind {
@@ -43,6 +53,7 @@ impl Kind {
         match self {
             Kind::Install => "cli_install",
             Kind::Update { .. } => "cli_update",
+            Kind::Daily => "cli_daily",
         }
     }
 }
@@ -52,6 +63,8 @@ impl Kind {
 pub struct State {
     pub install_id: Option<String>,
     pub last_version: Option<String>,
+    /// UTC day index (`now_secs() / SECS_PER_DAY`) of the last ping.
+    pub last_daily: Option<u64>,
 }
 
 impl State {
@@ -68,19 +81,29 @@ impl State {
         Self {
             install_id: get("install_id"),
             last_version: get("last_version"),
+            last_daily: map.get("last_daily").and_then(Value::as_u64),
         }
     }
 
     pub fn to_json(&self) -> Value {
-        json!({ "install_id": self.install_id, "last_version": self.last_version })
+        json!({
+            "install_id": self.install_id,
+            "last_version": self.last_version,
+            "last_daily": self.last_daily,
+        })
     }
 }
 
 /// Which event, if any, this run owes. A state with no id is a fresh install;
-/// a different version is an update; the same version sends nothing.
-pub fn decide(state: &State, version: &str) -> Option<Kind> {
+/// a different version is an update; the same version fires only the daily
+/// ping, and only when the UTC day moved on (an install or update sent today
+/// already proves the machine was active, so it suppresses the daily ping).
+pub fn decide(state: &State, version: &str, today: u64) -> Option<Kind> {
     match (&state.install_id, &state.last_version) {
-        (Some(_), Some(last)) if last == version => None,
+        (Some(_), Some(last)) if last == version => match state.last_daily {
+            Some(day) if day >= today => None,
+            _ => Some(Kind::Daily),
+        },
         (Some(_), Some(last)) => Some(Kind::Update { from: last.clone() }),
         _ => Some(Kind::Install),
     }
@@ -163,10 +186,9 @@ fn save(env: &BTreeMap<String, String>, state: &State) {
     let dir = crate::autoupdate::state_dir(env);
     let _ = crate::config::ensure_private_dir(&dir);
     let body = format!("{}\n", state.to_json());
-    let _ = crate::config::open_private(&state_path(env), true).and_then(|mut f| {
-        use std::io::Write;
-        f.write_all(body.as_bytes())
-    });
+    // `create + truncate` (not exclusive): the file exists after the first
+    // install, and every later version change and daily ping must overwrite it.
+    let _ = crate::config::write_private(&state_path(env), body.as_bytes());
 }
 
 /// A cargo build, or any process started by `cargo test` / `cargo run`. Tests
@@ -197,9 +219,10 @@ fn send(url: &str, body: &Value) {
         .send_string(&body.to_string());
 }
 
-/// Runs before every command. Never fails and never waits more than the send
-/// timeout. State is saved before the send, so a failed send is lost rather
-/// than retried on every run.
+/// Runs before every command. Never fails. State is saved before the send,
+/// so a failed send is lost rather than retried on every run. The daily ping
+/// is the exception: it is handed to a detached child, so the command never
+/// waits on the network for it.
 #[cfg(feature = "native")]
 pub fn on_startup(env: &BTreeMap<String, String>) {
     let config_flag =
@@ -219,17 +242,21 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
     {
         return;
     }
+    let today = crate::autoupdate::now_secs() / SECS_PER_DAY;
     let mut state = fs::read_to_string(state_path(env))
         .ok()
         .map(|raw| State::from_json(&raw))
         .unwrap_or_default();
-    let Some(kind) = decide(&state, crate::VERSION) else {
+    let Some(kind) = decide(&state, crate::VERSION, today) else {
         return;
     };
     let fresh = state.install_id.is_none();
     let id = state.install_id.clone().unwrap_or_else(new_install_id);
     state.install_id = Some(id.clone());
     state.last_version = Some(crate::VERSION.to_string());
+    // Any ping sent proves the machine was active today, so it suppresses
+    // the daily ping for the rest of the UTC day.
+    state.last_daily = Some(today);
     save(env, &state);
     if fresh {
         use std::io::IsTerminal;
@@ -237,16 +264,71 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
             eprintln!("{}", crate::term::dim(NOTICE));
         }
     }
-    send(
-        custom.as_deref().unwrap_or(POSTHOG_CAPTURE_URL),
-        &payload(
-            &id,
-            &kind,
-            crate::VERSION,
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-        ),
+    let url = custom.as_deref().unwrap_or(POSTHOG_CAPTURE_URL);
+    let body = payload(
+        &id,
+        &kind,
+        crate::VERSION,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
     );
+    match kind {
+        Kind::Daily => spawn_daily_sender(&body, url),
+        Kind::Install | Kind::Update { .. } => send(url, &body),
+    }
+}
+
+/// Detached sender for the daily ping: payload on stdin (never argv), and
+/// only the endpoint is forwarded. The child inherits no config, no key, and
+/// no home directory, so nothing but the exact JSON leaves this machine.
+#[cfg(feature = "native")]
+fn spawn_daily_sender(body: &Value, url: &str) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = Command::new(exe);
+    cmd.arg("__telemetry-daily")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env_clear()
+        .env("ANYR_TELEMETRY_URL", url);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    }
+    if let Ok(mut child) = cmd.spawn() {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(body.to_string().as_bytes());
+        }
+        // Detached: the child finishes its one POST after we exit.
+    }
+}
+
+/// Body of the detached child: one POST of the JSON read from stdin, one
+/// attempt, response ignored. Silent and never panics.
+#[cfg(feature = "native")]
+pub fn send_from_stdin(env: &BTreeMap<String, String>) {
+    use std::io::Read;
+    let Some(url) = endpoint(env) else {
+        return;
+    };
+    let mut buf = String::new();
+    let _ = std::io::stdin().read_to_string(&mut buf);
+    let Ok(body) = serde_json::from_str::<Value>(buf.trim()) else {
+        return;
+    };
+    send(&url, &body);
 }
 
 #[cfg(test)]
@@ -290,25 +372,48 @@ mod tests {
     }
 
     #[test]
-    fn decides_install_update_or_nothing() {
+    fn decides_install_update_daily_or_nothing() {
         let fresh = State::default();
-        assert_eq!(decide(&fresh, "0.1.40"), Some(Kind::Install));
+        assert_eq!(decide(&fresh, "0.1.40", 100), Some(Kind::Install));
         let seen = State {
             install_id: Some("abc".into()),
             last_version: Some("0.1.39".into()),
+            last_daily: Some(100),
         };
         assert_eq!(
-            decide(&seen, "0.1.40"),
+            decide(&seen, "0.1.40", 100),
             Some(Kind::Update {
                 from: "0.1.39".into()
             })
         );
-        assert_eq!(decide(&seen, "0.1.39"), None, "same version sends nothing");
+        // Same version and a ping already sent today: nothing.
+        assert_eq!(decide(&seen, "0.1.39", 100), None);
         let no_id = State {
             install_id: None,
             last_version: Some("0.1.39".into()),
+            last_daily: None,
         };
-        assert_eq!(decide(&no_id, "0.1.39"), Some(Kind::Install));
+        assert_eq!(decide(&no_id, "0.1.39", 100), Some(Kind::Install));
+    }
+
+    #[test]
+    fn decides_daily_only_when_the_utc_day_moved_on() {
+        let seen = State {
+            install_id: Some("abc".into()),
+            last_version: Some("0.1.39".into()),
+            last_daily: Some(100),
+        };
+        assert_eq!(decide(&seen, "0.1.39", 101), Some(Kind::Daily));
+        assert_eq!(decide(&seen, "0.1.39", 102), Some(Kind::Daily));
+        // A state written before daily pings existed has no stamp: daily due.
+        let legacy = State {
+            install_id: Some("abc".into()),
+            last_version: Some("0.1.39".into()),
+            last_daily: None,
+        };
+        assert_eq!(decide(&legacy, "0.1.39", 100), Some(Kind::Daily));
+        // Clock skew backwards still counts as "already sent today".
+        assert_eq!(decide(&seen, "0.1.39", 99), None);
     }
 
     #[test]
@@ -355,12 +460,43 @@ mod tests {
     }
 
     #[test]
+    fn daily_payload_holds_only_the_promised_fields() {
+        let body = payload("abc", &Kind::Daily, "0.1.40", "linux", "x86_64");
+        assert_eq!(body["event"], "cli_daily");
+        assert_eq!(body["distinct_id"], "abc");
+        let mut props: Vec<&str> = body["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        props.sort_unstable();
+        assert_eq!(
+            props,
+            [
+                "$geoip_disable",
+                "$lib",
+                "$process_person_profile",
+                "arch",
+                "channel",
+                "os",
+                "version"
+            ]
+        );
+        assert!(body["properties"].get("from_version").is_none());
+    }
+
+    #[test]
     fn state_roundtrips_and_a_bad_file_reads_as_fresh() {
         let s = State {
             install_id: Some("abc".into()),
             last_version: Some("1".into()),
+            last_daily: Some(100),
         };
         assert_eq!(State::from_json(&s.to_json().to_string()), s);
         assert_eq!(State::from_json("not json"), State::default());
+        // Files written before the daily ping have no stamp, so daily is due.
+        let legacy = State::from_json(r#"{"install_id":"a","last_version":"1"}"#);
+        assert_eq!(legacy.last_daily, None);
     }
 }

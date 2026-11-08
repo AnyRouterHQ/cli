@@ -45,6 +45,14 @@ pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
         }
         return 0;
     }
+    // Detached daily-telemetry sender (spawned by `telemetry::on_startup`).
+    // Reads the payload from stdin, never argv; nothing here may run the
+    // startup hooks, or the child would recurse.
+    #[cfg(feature = "native")]
+    if raw.first().map(String::as_str) == Some("__telemetry-daily") {
+        crate::telemetry::send_from_stdin(&env);
+        return 0;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let argv0 = std::env::args().next();
     #[cfg(target_arch = "wasm32")]

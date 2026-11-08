@@ -636,11 +636,15 @@ set yourself.
 
 ## Telemetry
 
-`anyr` sends one anonymous ping the first time it runs and again after each
-update, so we can count installs and versions. It holds a random install id,
-the `anyr` version, the OS and the CPU architecture. It never holds your key,
-paths, hostname, IP address or prompts, and PostHog is told not to build a
-person profile or look up a location. The exact payload is built in
+`anyr` sends one anonymous ping the first time it runs, again after each
+update, and once more per UTC day on the first command of that day, so we
+can count installs, versions and daily active users. It holds a random
+install id, the `anyr` version, the OS and the CPU architecture. It never
+holds your key, paths, hostname, IP address, prompts or which subcommand
+you ran, and PostHog is told not to build a person profile or look up a
+location. The daily ping runs in a detached child (payload on stdin, only
+the endpoint in its environment), so the first command of a day never
+waits on the network. The exact payload is built in
 [`src/telemetry.rs`](src/telemetry.rs) and checked by `tests/telemetry.rs`.
 
 Turn it off with any one of:
