@@ -6,6 +6,33 @@
 //! The next run swaps it in with a rename, keeping the previous build for
 //! `anyr update --rollback`. A running process keeps its own image, so an
 //! agent launched by an older `anyr` is never disturbed.
+//!
+//! Lifecycle, for the two long-lived contexts (the launcher from bare `anyr`
+//! and coding-agent launches such as `anyr claude`):
+//!
+//! * Check timing: `on_startup` runs before either context starts (see
+//!   `commands.rs`, the menu path and the main dispatch). It spawns the
+//!   detached `anyr update --auto` child only when the persisted last check
+//!   is older than the interval (default a day) and records `last_check`
+//!   before any network work, so one spawn per interval total.
+//! * While running: the menu and the agent parent also run a ticker
+//!   (`spawn_periodic_check`) that re-fires the same detached child on each
+//!   interval boundary about once every 60 seconds. The child has its own
+//!   process group and stdio, so the parent neither waits nor inherits it.
+//! * Staging: the child only ever downloads beside the binary
+//!   (`.anyr.pending`) under `update.lock`, verifies the checksum, and
+//!   records it as pending. It never renames over the binary, so a running
+//!   launcher or agent keeps its own image untouched.
+//! * Apply: on the next start (launcher restart, next `anyr claude`, or a
+//!   menu "Launch" click) the staged build is re-hashed and swapped in with
+//!   a hard link plus rename, keeping the old build as `.anyr.prev` for
+//!   `update --rollback`. A stale, tampered, cross-channel, or not-newer
+//!   build is discarded instead of installed.
+//! * Opt-outs: CI, `ANYR_NO_AUTO_UPDATE`, `ANYR_NO_UPDATE`, config
+//!   `update.auto`, non-terminal output (`--json`, `--quiet`, piped stdio
+//!   without `ANYR_AUTO_UPDATE=1`), cargo `target/` dev builds, and any
+//!   `anyr` run inside a launched agent (`ANYR_LAUNCHER_CHILD`). Failures
+//!   never print; `update --status` shows them.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -515,9 +542,42 @@ pub fn on_startup(command: &str, parsed: &ParsedArgs, env: &BTreeMap<String, Str
             notify_once(env, &mut state, &hint, &latest);
         }
     }
-    if !checked_recently(&state, env) {
+    maybe_spawn_detached_check(env);
+}
+
+/// Spawn the detached checker when the last recorded check is older than the
+/// interval. Reloads the state first: the checker saves `last_check` before it
+/// touches the network, so a fresh read keeps two contexts from firing twice.
+#[cfg(feature = "native")]
+pub(crate) fn maybe_spawn_detached_check(env: &BTreeMap<String, String>) {
+    if !checked_recently(&UpdateState::load(env), env) {
         spawn_detached_check(env);
     }
+}
+
+/// One tick step between interval probes for a long-lived parent (the menu or
+/// the agent parent that blocks in `spawn_child`). Clamped so the probe never
+/// tight-loops, whatever interval override is set.
+#[cfg(feature = "native")]
+fn ticker_step_secs(env: &BTreeMap<String, String>) -> u64 {
+    update_interval_secs(env).clamp(5, 60)
+}
+
+/// A thread for the two long-lived contexts that re-fires the detached
+/// `update --auto` child once each interval elapses, for the whole session.
+/// Only ever stages (never swaps), so the running launcher or agent is never
+/// disturbed; the staged build applies on the next start. The thread lives
+/// until the parent process exits. Callers who already checked the opt-outs
+/// (via `on_startup`) just keep the handle for their lifetime.
+#[cfg(feature = "native")]
+pub(crate) fn spawn_periodic_check(env: BTreeMap<String, String>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let step = std::time::Duration::from_secs(ticker_step_secs(&env));
+        loop {
+            std::thread::sleep(step);
+            maybe_spawn_detached_check(&env);
+        }
+    })
 }
 
 /// Print the package-manager hint once per version. The stager may have
@@ -698,6 +758,18 @@ mod tests {
         };
         assert_eq!(UpdateState::from_json(&state.to_json().to_string()), state);
         assert_eq!(UpdateState::from_json("not json"), UpdateState::default());
+    }
+
+    #[test]
+    fn ticker_step_is_clamped_between_five_and_sixty_seconds() {
+        // WHY: a 24h interval must not make the long-lived probe sleep a day,
+        // and a tiny override must not rebuild the state on every second.
+        let env = BTreeMap::<String, String>::new();
+        assert_eq!(ticker_step_secs(&env), 60, "default a day -> 60s probes");
+        let env = BTreeMap::from([("ANYR_UPDATE_INTERVAL_SECS".into(), "10".into())]);
+        assert_eq!(ticker_step_secs(&env), 10);
+        let env = BTreeMap::from([("ANYR_UPDATE_INTERVAL_SECS".into(), "1".into())]);
+        assert_eq!(ticker_step_secs(&env), 5);
     }
 
     #[test]

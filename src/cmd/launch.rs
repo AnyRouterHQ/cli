@@ -530,6 +530,11 @@ pub(crate) fn launch(
             crate::launch_cache::opencode_major(spot.dir, &resolved),
         );
     }
+    // Stage a new build while the agent runs; it applies on the next start,
+    // so the running agent is never disturbed. Headless runs skip this: they
+    // are short and non-interactive.
+    #[cfg(feature = "native")]
+    let _check_ticker = crate::autoupdate::spawn_periodic_check(env.clone());
     Ok(run_agent(
         tool_name,
         &resolved,

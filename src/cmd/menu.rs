@@ -327,6 +327,11 @@ pub(crate) fn run_menu(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
         return Ok(0);
     }
 
+    // A long-lived menu keeps the background check fresh for its whole
+    // session; staging never swaps, so the running agent is undisturbed.
+    #[cfg(feature = "native")]
+    let _check_ticker = crate::autoupdate::spawn_periodic_check(env.clone());
+
     // Fullscreen palette by default. ANYR_TUI=0 forces inline HUD.
     let cache = Arc::new(Mutex::new(CreditsCache::fresh()));
     #[cfg(feature = "native")]
@@ -591,6 +596,10 @@ pub(crate) fn launcher_dispatch(
     }
     if action.starts_with("Launch ") && action != "Launch coding agent…" {
         let tool = action.trim_start_matches("Launch ").trim();
+        // Apply a build staged since the menu started, before the agent
+        // starts, so this launch is the "next `anyr claude`" that installs it.
+        #[cfg(feature = "native")]
+        crate::autoupdate::on_startup(tool, parsed, env);
         // Unsigned HUD's first row is Launch claude. run_launch signs in.
         return Ok(LauncherNext::Exit(run_launch(tool, parsed, env)?));
     }
@@ -834,6 +843,9 @@ pub(crate) fn launch_agent_picker(
         }
     };
     let tool = present[idx].0;
+    // Same apply-at-"next claude" refresh as the "Launch <tool>" entry.
+    #[cfg(feature = "native")]
+    crate::autoupdate::on_startup(tool, parsed, env);
     Ok(LauncherNext::Exit(run_launch(tool, parsed, env)?))
 }
 

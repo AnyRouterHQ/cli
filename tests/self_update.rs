@@ -735,6 +735,135 @@ fn staged_hash_matches_the_verified_build() {
 }
 
 #[test]
+fn launcher_start_spawns_a_background_check() {
+    // WHY: the bare `anyr` launcher is the first long-lived context: it must
+    // stage the next build without ever blocking on the network.
+    let mock = serve(vec![Release::good("v999.0.0", false)], Duration::ZERO);
+    let install = Install::new();
+    // ANYR_TUI_DUMP opens the launcher without a TTY; ANYR_AUTO_UPDATE=1 in
+    // the harness lets it check off a TTY.
+    let out = install.run(&mock, &[], &[("ANYR_TUI_DUMP", "1")]);
+    assert!(
+        out.status.success(),
+        "launcher dump failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let state = install.wait_checked();
+    assert_eq!(state["pending_version"], "999.0.0", "{state}");
+    assert_eq!(
+        fs::read(&install.bin).unwrap(),
+        install.original,
+        "a launcher start stages, not swaps, the binary"
+    );
+    // Next launcher start applies the staged build.
+    install.run(&mock, &[], &[("ANYR_TUI_DUMP", "1")]);
+    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert!(install.state()["pending_path"].is_null());
+}
+
+#[test]
+fn agent_launch_stages_on_first_run_and_applies_on_the_next() {
+    // WHY: `anyr claude` is the second long-lived context: its parent must
+    // stage before the agent starts and apply on the next launch.
+    let mock = serve(vec![Release::good("v999.0.0", false)], Duration::ZERO);
+    let install = Install::new();
+    // --dry-run never spawns a real agent, but on_startup still ran first.
+    install.run(&mock, &["claude", "--dry-run"], &[]);
+    let state = install.wait_checked();
+    assert_eq!(state["pending_version"], "999.0.0", "{state}");
+    assert_eq!(fs::read(&install.bin).unwrap(), install.original);
+    let out = install.run(&mock, &["claude", "--dry-run"], &[]);
+    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert!(install.state()["pending_path"].is_null());
+    // Off a TTY the notice stays out of the output.
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("anyr updated"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn running_process_is_never_disturbed_while_a_build_stages() {
+    // WHY: while the old `anyr` (here the detached stager itself, standing
+    // in for any long-lived launcher or agent) is still running, the binary
+    // must not be replaced under it; the swap waits for the next start.
+    let mock = serve(
+        vec![Release::good("v999.0.0", false)],
+        Duration::from_secs(3),
+    );
+    let install = Install::new();
+    let mut stager = install.spawn(&mock, &["update", "--auto"]);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while install.state()["last_check"].as_u64().unwrap_or(0) == 0 {
+        assert!(Instant::now() < deadline, "stager never started");
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(fs::read(&install.bin).unwrap(), install.original);
+    stager.wait().unwrap();
+    install.wait_checked();
+    assert_eq!(
+        fs::read(&install.bin).unwrap(),
+        install.original,
+        "the staged build must not swap while the process runs"
+    );
+    install.run(&mock, &["config"], &[]);
+    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+}
+
+#[cfg(unix)]
+#[test]
+fn staged_build_applies_on_the_next_tty_start_and_prints_notice() {
+    // WHY: on a real terminal the swap notice is the only visible sign; off
+    // a TTY (proven above) it must stay hidden.
+    let mock = serve(vec![Release::good("v999.0.0", false)], Duration::ZERO);
+    let install = Install::new();
+    install.run(&mock, &["config"], &[]);
+    install.wait_checked();
+    let helper = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".agents/skills/verify-anyr/helpers/pty-anyr.py");
+    if !helper.exists() {
+        return; // PTY helper is dev-machine tooling; other tests cover the swap.
+    }
+    let transcript = install.root.join("tty.txt");
+    let out = std::process::Command::new("python3")
+        .args([
+            helper.to_str().unwrap(),
+            "--timeout",
+            "8",
+            "--out",
+            transcript.to_str().unwrap(),
+            "--",
+            install.bin.to_str().unwrap(),
+            "config",
+        ])
+        .env("ANYROUTER_HOME", install.home())
+        .env("ANYR_UPDATE_BASE_URL", &mock.base)
+        .env("ANYR_AUTO_UPDATE", "1")
+        .env("NO_COLOR", "1")
+        .env_remove("ANYR_NO_UPDATE")
+        .env_remove("CI")
+        .output()
+        .expect("pty config");
+    let captured = std::fs::read_to_string(&transcript)
+        .unwrap_or_else(|_| String::from_utf8_lossy(&out.stdout).into_owned());
+    let combined = format!(
+        "{}{}{}",
+        captured,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code().unwrap_or(1),
+        0,
+        "pty config failed:\n{combined}"
+    );
+    assert!(combined.contains("anyr updated"), "{combined}");
+    assert!(combined.contains("999.0.0"), "{combined}");
+    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+}
+
+#[test]
 fn a_killed_stager_does_not_block_the_next_update() {
     // WHY: an updater killed mid-check (closed laptop, OOM, kill -9) used to
     // leave update.lock behind and block every update for 15 minutes.
