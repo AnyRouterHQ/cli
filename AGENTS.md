@@ -24,6 +24,8 @@ Version lock is also enforced in `tests/release_lock.rs`.
 ## Conventions
 
 - Conventional commits. `.githooks/prepare-commit-msg` appends two Co-authored-by trailers. Opt out with `ANYR_SKIP_COAUTHORS=1`. Enable with `./scripts/install-hooks.sh`.
+- `.githooks/pre-push` runs `cargo fmt --check` and clippy. Skip with `ANYR_SKIP_PREPUSH=1`.
+- CI runs tests with `cargo nextest run` (profile in `.config/nextest.toml`). `cargo test` still works locally.
 - Error strings are human sentences. Use `map_err` plus `format!` and name the failing subject.
 - Unit tests live in `#[cfg(test)]` next to the module. Integration tests spawn `env!("CARGO_BIN_EXE_anyr")` with a fresh `ANYROUTER_HOME`.
 
