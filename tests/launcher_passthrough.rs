@@ -160,7 +160,13 @@ fn separator_sends_anyr_flag_names_to_the_agent_raw() {
         extra.extend(raw);
         let got = dry_run(agent, &extra);
         assert_eq!(got.code, 0, "{agent}: {}", got.stderr);
-        let mut want = base.args.clone();
+        let mut want = if *agent == "kilo" {
+            // Kilo suppresses anyr's own -m when the raw tail picks a model,
+            // so there is no anyr prefix to keep (#230).
+            vec![]
+        } else {
+            base.args.clone()
+        };
         want.extend(strs(&raw));
         assert_eq!(got.args, want, "{agent}: raw tail, no yolo mapping");
         if let Some(first) = native.first() {

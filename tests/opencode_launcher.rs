@@ -127,3 +127,44 @@ fn dry_run_shows_standalone_for_opencode_2_only() {
     assert!(dry_run_args("opencode v2.0.24", "v2").contains(r#"args: ["run","--standalone","hi"]"#));
     assert!(dry_run_args("1.4.3", "v1").contains(r#"args: ["run","hi"]"#));
 }
+
+fn dry_run_auto(tag: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("anyr-opencode-auto-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("fake-opencode.sh");
+    std::fs::write(&script, FAKE).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_anyr"))
+        .env("ANYR_NO_UPDATE", "1")
+        .env("ANYR_NO_CATALOG", "1")
+        .env("NO_COLOR", "1")
+        .env("ANYROUTER_HOME", &dir)
+        .env("ANYROUTER_OPENCODE_PATH", &script)
+        .env("FAKE_OC_VERSION", "opencode v2.0.24")
+        .args([
+            "opencode",
+            "--base-url",
+            "http://127.0.0.1:1/api",
+            "--key",
+            KEY,
+            "--model",
+            "auto",
+            "--yes",
+            "--dry-run",
+            "--",
+            "run",
+            "hi",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn auto_registers_an_anyrouter_model_and_sets_the_session_model() {
+    // WHY #230: --model auto left models empty and no top-level model.
+    let out = dry_run_auto("auto");
+    assert!(out.contains("anyrouter/anyrouter/auto"), "{out}");
+    assert!(out.contains("anyrouter/auto"), "{out}");
+}

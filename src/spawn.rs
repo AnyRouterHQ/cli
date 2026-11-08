@@ -456,12 +456,12 @@ pub fn build_tool_env(input: BuildToolEnvInput<'_>) -> BTreeMap<String, String> 
         if input.tool_name == "opencode" {
             config["$schema"] = "https://opencode.ai/config.json".into();
         }
-        let catalog = catalog_model_id(input.model);
-        if !catalog.is_empty() && !is_auto_model(&catalog) {
-            provider["models"][&catalog] = serde_json::json!({ "name": catalog });
-            config["provider"]["anyrouter"] = provider;
-            config["model"] = serde_json::json!(format!("anyrouter/{catalog}"));
-        }
+        // Auto still names a gateway model: without a top-level model OpenCode
+        // stays on its own default and the empty allowlist hides AnyRouter.
+        let catalog = display_model_id(input.model);
+        provider["models"][&catalog] = serde_json::json!({ "name": catalog });
+        config["provider"]["anyrouter"] = provider;
+        config["model"] = serde_json::json!(format!("anyrouter/{catalog}"));
         env.insert(
             content_env.into(),
             serde_json::to_string(&config).unwrap_or_else(|_| "{}".into()),
@@ -1655,6 +1655,11 @@ pub fn model_args_for(
         return vec!["--model".into(), id];
     }
     let catalog = catalog_model_id(model);
+    if tool_name == "kilo" && (catalog.is_empty() || is_auto_model(&catalog)) {
+        // Kilo ignores the inline config's top-level model, so auto needs -m too.
+        let id = display_model_id(model);
+        return vec!["-m".into(), format!("anyrouter/{id}")];
+    }
     if catalog.is_empty() || is_auto_model(&catalog) || model_mode == "auto" {
         return vec![];
     }
@@ -2283,6 +2288,35 @@ mod tests {
             env.get("ANYROUTER_MODEL_MODE").map(String::as_str),
             Some("auto")
         );
+    }
+
+    #[test]
+    fn opencode_auto_still_names_an_anyrouter_model() {
+        // WHY #230: auto left provider models empty and top-level model unset.
+        let tool = builtin("opencode").unwrap();
+        for model in ["auto", "anyrouter/auto", ""] {
+            let env = build_tool_env(BuildToolEnvInput {
+                tool_name: "opencode",
+                tool: &tool,
+                profile: &profile(),
+                api_key: "sk-ar-v1-secret",
+                model,
+                effort: None,
+                context_window: None,
+                min_context: None,
+                model_map: None,
+            });
+            let config: serde_json::Value =
+                serde_json::from_str(env.get("OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+            assert_eq!(config["model"], "anyrouter/anyrouter/auto", "{model}");
+            assert_eq!(
+                config["provider"]["anyrouter"]["models"],
+                serde_json::json!({"anyrouter/auto": {"name": "anyrouter/auto"}}),
+                "{model}"
+            );
+        }
+        let args = model_args_for("kilo", "auto", "auto", None);
+        assert_eq!(args, vec!["-m", "anyrouter/anyrouter/auto"]);
     }
 
     #[test]
