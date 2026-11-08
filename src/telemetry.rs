@@ -295,6 +295,16 @@ fn spawn_daily_sender(body: &Value, url: &str) {
         .stderr(Stdio::null())
         .env_clear()
         .env("ANYR_TELEMETRY_URL", url);
+    #[cfg(windows)]
+    {
+        // Windows loads shared libraries through SYSTEMROOT; an env_clear()
+        // child can fail to start at all, which looks like a silent timeout.
+        for key in ["SYSTEMROOT", "WINDIR", "PATH"] {
+            if let Ok(value) = std::env::var(key) {
+                cmd.env(key, value);
+            }
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
