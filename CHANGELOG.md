@@ -10,6 +10,35 @@ GitHub Releases use this file as the release notes (full history through that ta
 
 * **cli:** add `anyr decision` for typed `POST /api/v1/decisions` requests with flag or stdin JSON input. Known Decisions models are refused by chat-agent launchers. ([duyet/anyrouter#3550](https://github.com/duyet/anyrouter/issues/3550))
 
+## [0.1.38](https://github.com/AnyRouterHQ/cli/compare/v0.1.37...v0.1.38) (2026-11-08)
+
+
+### Features
+
+* **artifact:** raise folder publish limits to match the server ([#228](https://github.com/AnyRouterHQ/cli/issues/228)) ([885c9c1](https://github.com/AnyRouterHQ/cli/commit/885c9c1e6ec61921a60a9d4c27d1e30dd73668a7))
+* **keys:** give each coding agent its own key or account ([#252](https://github.com/AnyRouterHQ/cli/issues/252)) ([cbbc659](https://github.com/AnyRouterHQ/cli/commit/cbbc659a821086bb20599bdab75fba68499a85a5))
+* **launch:** connect AnyRouter artifact tools in every MCP-capable agent by default ([#226](https://github.com/AnyRouterHQ/cli/issues/226)) ([854e53e](https://github.com/AnyRouterHQ/cli/commit/854e53ee3f8e21a1164e583051b3843317e2b825))
+* **launch:** send X-AnyRouter-Title via anyr CLI for app counting ([#282](https://github.com/AnyRouterHQ/cli/issues/282)) ([8503b1f](https://github.com/AnyRouterHQ/cli/commit/8503b1f4c185156f5c5ebc2ec1b0a5198bf62189)), closes [#275](https://github.com/AnyRouterHQ/cli/issues/275)
+* **models:** show the model picker as aligned columns ([#242](https://github.com/AnyRouterHQ/cli/issues/242)) ([adaae15](https://github.com/AnyRouterHQ/cli/commit/adaae152bfe1921d8a64e190f1b0e1139df7da13))
+* **telemetry:** anonymous install and update ping to PostHog, opt-out ([42e4ffe](https://github.com/AnyRouterHQ/cli/commit/42e4ffefcaafc99313fa0fee6f16b92e6aacfb7b))
+
+
+### Bug Fixes
+
+* **fx:** cap model_metadata at 256 so fx stops exiting LimitExceeded ([4abaced](https://github.com/AnyRouterHQ/cli/commit/4abaced6d11a67eaaebf13670ff385dd66ffb2ce))
+* **fx:** wait for the model catalog before writing the agent's model list ([#260](https://github.com/AnyRouterHQ/cli/issues/260)) ([255508e](https://github.com/AnyRouterHQ/cli/commit/255508e95c2819ab6d9b4d96b75b51fa3e95dcf6))
+* **install:** follow the repo transfer to AnyRouterHQ/cli ([3788b10](https://github.com/AnyRouterHQ/cli/commit/3788b10e12bad4547ae9d8da47f5fefa217a486d))
+* **keys:** honor --json on keys create ([#281](https://github.com/AnyRouterHQ/cli/issues/281)) ([f084df2](https://github.com/AnyRouterHQ/cli/commit/f084df2840c915146a24c4795946c3451e956928))
+* **launch:** codex --last dedupe and grok session_summary model ([#283](https://github.com/AnyRouterHQ/cli/issues/283)) ([319f334](https://github.com/AnyRouterHQ/cli/commit/319f334030ad9f8800c4fe7a0f5033ed4c486892))
+* **release:** release notes show only tagged version; move verify-anyr to .agents/skills ([#280](https://github.com/AnyRouterHQ/cli/issues/280)) ([c0de0a4](https://github.com/AnyRouterHQ/cli/commit/c0de0a4688eef2cf901f8f71ae09bfe168d57aa2))
+* **telemetry:** stay off under cargo test even for a copied binary ([5e84031](https://github.com/AnyRouterHQ/cli/commit/5e84031934b121ae500e0c9d57a45c353f5efa60))
+* **update:** stay silent like no new version when release listing fails ([a031eb6](https://github.com/AnyRouterHQ/cli/commit/a031eb6d4258bf7b76904b977fd99655aa8de60a))
+
+
+### Performance Improvements
+
+* **models:** open the launcher's model pickers from the disk cache ([#249](https://github.com/AnyRouterHQ/cli/issues/249)) ([6f00a10](https://github.com/AnyRouterHQ/cli/commit/6f00a10ffdd9c5224998649b88671bf191f1362a))
+
 ## [0.1.37](https://github.com/anyrouter-dev/cli/compare/v0.1.36...v0.1.37) (2026-10-28)
 
 
