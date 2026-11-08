@@ -1416,10 +1416,13 @@ type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::T
 
 /// Why a connect attempt failed. `Refused` (401/403) will not heal on retry —
 /// the credential is wrong or out of scope — so the loop stops instead of
-/// hammering the cloud with it forever.
+/// hammering the cloud with it forever. `DeviceLimit` (409) is the relay
+/// device limit, which is not a credential problem, so it gets its own
+/// message and hint.
 #[derive(Debug)]
 enum ConnectError {
     Refused(String),
+    DeviceLimit(String),
     Transient(String),
 }
 
@@ -1500,7 +1503,7 @@ use /api/v1/relay/connect, or pass --token.",
         Err(tungstenite::HandshakeError::Failure(tungstenite::Error::Http(resp)))
             if resp.status().as_u16() == 409 =>
         {
-            Err(ConnectError::Refused(device_limit_message(
+            Err(ConnectError::DeviceLimit(device_limit_message(
                 resp.body().as_deref(),
             )))
         }
@@ -2236,10 +2239,16 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
         print_start_summary(&router, f.pool, f.detached, f.env);
     }
 
+    // The id lives in memory first: the config file is only the cache between
+    // runs, so a failed write must not turn every reconnect into `fresh=1`.
+    // Pool syncs go to this id once the cloud has named it, never to the
+    // (possibly stale) cache.
+    let device_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let pool_chosen = Arc::new(AtomicBool::new(f.pool_chosen));
     let on_pool: live::PoolToggle = {
         let (parsed, env) = (f.parsed.clone(), f.env.clone());
         let pool_chosen = Arc::clone(&pool_chosen);
+        let device_id = Arc::clone(&device_id);
         let prefs_path = state::paths(f.env);
         Box::new(move |on| {
             pool_chosen.store(true, Ordering::Relaxed);
@@ -2250,7 +2259,8 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
                 "pool turned {} (saved)",
                 if on { "on" } else { "off" }
             ));
-            sync_pool_in_background(on, parsed.clone(), env.clone());
+            let live = device_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            sync_pool_in_background(on, parsed.clone(), env.clone(), live);
         })
     };
     let ticker = live::Ticker::start(
@@ -2268,16 +2278,15 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
     let pool_synced = std::cell::Cell::new(false);
     let sync_pool_once = || {
         if !pool_synced.replace(true) {
+            let live = device_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
             sync_pool_in_background(
                 stats.pool.load(Ordering::Relaxed),
                 f.parsed.clone(),
                 f.env.clone(),
+                live,
             );
         }
     };
-    // The id lives in memory first: the config file is only the cache between
-    // runs, so a failed write must not turn every reconnect into `fresh=1`.
-    let device_id: Mutex<Option<String>> = Mutex::new(None);
     let on_device = |id: &str| {
         *device_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.to_string());
         if cached_relay_device_id(f.env).as_deref() != Some(id) {
@@ -2292,7 +2301,7 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
     // Set while disconnected, for the "back online after" line.
     let mut offline_since: Option<std::time::Instant> = None;
     let mut last_err = String::new();
-    let mut refused = None;
+    let mut refused: Option<ConnectError> = None;
     loop {
         if live::stop_requested() != 0 {
             break;
@@ -2361,8 +2370,8 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
                     }
                 }
             }
-            Err(ConnectError::Refused(msg)) => {
-                refused = Some(msg);
+            Err(err @ (ConnectError::Refused(_) | ConnectError::DeviceLimit(_))) => {
+                refused = Some(err);
                 break;
             }
             Err(ConnectError::Transient(err)) => {
@@ -2413,12 +2422,27 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
         sup.lock().unwrap_or_else(|e| e.into_inner()).stop_all();
     }
     state::clear_if_owned(&f.paths, meta.pid);
-    if let Some(msg) = refused {
-        return Err(view::error(
-            "the relay refused this credential",
-            &msg,
-            &format!("`{bin} login` for a fresh key, or `{bin} relay doctor`"),
-        ));
+    if let Some(err) = refused {
+        return Err(match err {
+            ConnectError::Refused(msg) => view::error(
+                "the relay refused this credential",
+                &msg,
+                &format!("`{bin} login` for a fresh key, or `{bin} relay doctor`"),
+            ),
+            ConnectError::DeviceLimit(msg) => view::error(
+                "this account already has the maximum number of devices",
+                &msg,
+                &format!(
+                    "remove a device in the dashboard ({DEVICES_URL}) or \
+                     `{bin} relay devices rm <id> --yes`, or start the relay with an existing `--name`"
+                ),
+            ),
+            ConnectError::Transient(msg) => view::error(
+                "the relay could not connect",
+                &msg,
+                &format!("`{bin} relay doctor`"),
+            ),
+        });
     }
     let snap = stats.snapshot(&meta, state::now_secs());
     if !f.quiet {
@@ -2487,10 +2511,10 @@ fn sync_pool_in_background(
     pool: bool,
     parsed: crate::parse::ParsedArgs,
     env: BTreeMap<String, String>,
+    live_device_id: Option<String>,
 ) {
     std::thread::spawn(move || {
-        let result = resolve_relay_device_id(&parsed, &env)
-            .and_then(|id| set_relay_pool(&id, pool, &parsed, &env))
+        let result = sync_pool(pool, &parsed, &env, live_device_id.as_deref())
             .map_err(|e| e.trim_start_matches("error: ").to_string());
         match (result, pool) {
             (Ok(()), _) => vlog(&format!("pool_enabled={pool} saved for this device")),
@@ -2506,6 +2530,23 @@ fn sync_pool_in_background(
             }
         }
     });
+}
+
+/// The pool sync itself: the id the cloud bound this connection to wins; the
+/// cached id is only a fallback before the first `device` frame. The config
+/// may not have been writable, so the cache can be stale — PATCHing it would
+/// flip pool sharing on the wrong device.
+fn sync_pool(
+    pool: bool,
+    parsed: &crate::parse::ParsedArgs,
+    env: &BTreeMap<String, String>,
+    live_device_id: Option<&str>,
+) -> Result<(), String> {
+    let id = match live_device_id {
+        Some(id) => id.to_string(),
+        None => resolve_relay_device_id(parsed, env)?,
+    };
+    set_relay_pool(&id, pool, parsed, env)
 }
 
 /// `anyr relay pair [--name <device>]` — explicit pairing (start auto-pairs).
@@ -4081,11 +4122,15 @@ profiles:
             }
             let _ = join.join();
         }
-        // Every device slot taken: stop, and pass the cloud's message on.
+        // Every device slot taken: stop, and pass the cloud's message on. The
+        // device limit is not a credential problem, so it must not come back as
+        // Refused (which prints the login hint).
         let (url, _seen, join) = spawn_mock_cloud(Some(409), |_| {});
         match connect_ws(&url, "sk-ar-v1-k") {
-            Err(ConnectError::Refused(msg)) => assert!(msg.contains("device slot"), "{msg}"),
-            other => panic!("expected Refused for 409, got {other:?}"),
+            Err(ConnectError::DeviceLimit(msg)) => {
+                assert!(msg.contains("device slot"), "{msg}")
+            }
+            other => panic!("expected DeviceLimit for 409, got {other:?}"),
         }
         let _ = join.join();
         assert_eq!(
@@ -4101,6 +4146,77 @@ profiles:
             Err(ConnectError::Transient(_))
         ));
         let _ = join.join();
+    }
+
+    /// A one-shot HTTP mock that records the request line and body and replies
+    /// `200 {}`. Returns the base URL (no trailing slash) and a handle for the
+    /// recorded (request line, body), in receive order.
+    fn spawn_http_mock() -> (String, std::thread::JoinHandle<Vec<(String, String)>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/api", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Read, Write};
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request_line = line.trim().to_string();
+            let mut content_length = 0_usize;
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap();
+                if header == "\r\n" || header.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = header.split_once(':') {
+                    if name.trim().eq_ignore_ascii_case("content-length") {
+                        content_length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+            }
+            let mut body = vec![0_u8; content_length];
+            reader.read_exact(&mut body).unwrap();
+            let body = String::from_utf8_lossy(&body).into_owned();
+            reader
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .unwrap();
+            vec![(request_line, body)]
+        });
+        (base, handle)
+    }
+
+    #[test]
+    fn pool_sync_patches_the_live_device_id_not_the_stale_cache() {
+        // #198(a): after the first `device` frame the in-memory id wins; the
+        // cached id can be stale when the config was unwritable.
+        let home = temp_home("pool-live-id");
+        std::fs::write(
+            home.join("config.yaml"),
+            "active_profile: default\nprofiles:\n  default:\n    relay_device_id: dev-stale\n",
+        )
+        .unwrap();
+        let (base, handle) = spawn_http_mock();
+        let env = env_with(&home, &[("ANYROUTER_API_KEY", "sk-ar-v1-pooltest8888")]);
+        let parsed = parsed_start(vec![("base-url", crate::parse::FlagValue::Value(base))]);
+
+        // Live id known: PATCH must go there, not to the cached dev-stale.
+        sync_pool(true, &parsed, &env, Some("dev-live")).expect("sync pool on live id");
+        let seen = handle.join().unwrap();
+        assert_eq!(seen.len(), 1);
+        let (line, body) = &seen[0];
+        assert!(line.contains("/api/v1/relay/devices/dev-live"), "{line}");
+        assert!(body.contains("\"pool_enabled\":true"), "{body}");
+
+        // Before the first device frame: fall back to the cached id.
+        let (base, handle) = spawn_http_mock();
+        let parsed = parsed_start(vec![("base-url", crate::parse::FlagValue::Value(base))]);
+        sync_pool(false, &parsed, &env, None).expect("sync pool from cache");
+        let seen = handle.join().unwrap();
+        let (line, body) = &seen[0];
+        assert!(line.contains("/api/v1/relay/devices/dev-stale"), "{line}");
+        assert!(body.contains("\"pool_enabled\":false"), "{body}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

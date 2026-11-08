@@ -5,7 +5,7 @@ use crate::config::{write_config, DEFAULT_PROFILE};
 use crate::install::{ensure_tool_installed, Install};
 use crate::key::{
     load_config_if_present, profile_for_agent, resolve_base_url, resolve_launch_key,
-    resolve_launch_model,
+    resolve_launch_model, KeySource,
 };
 use crate::parse::{get_string_flag, ParsedArgs};
 use crate::spawn::{
@@ -213,15 +213,18 @@ pub(crate) fn launch(
     if is_systemone_model(&guard_model) {
         return Err(chat_model_error(&guard_model, tool_name));
     }
-    let key = if let Some((key, _)) =
+    // Keys from `--key` or ANYROUTER_API_KEY must never reach config.yaml:
+    // they stay in the process env only. `anyr login` is the only path that
+    // writes a key to disk (and it does so through `persist_login` below).
+    let (key, ephemeral_key) = if let Some((key, source)) =
         resolve_launch_key(&parsed.flags, env, existing.as_ref(), tool_name)
     {
-        key
+        (key, matches!(source, KeySource::Flag | KeySource::Env))
     } else {
         let base = resolve_base_url(&parsed.flags, stored);
         let acquired = acquire_api_key(&parsed.flags, env, &base, Some(tool_name))?;
         persist_login(parsed, env, &acquired.api_key, &acquired.source)?;
-        acquired.api_key
+        (acquired.api_key, false)
     };
     let existing = load_config_if_present(&path);
     let stored = existing
@@ -495,10 +498,18 @@ pub(crate) fn launch(
         ..crate::config::Config::default()
     });
     // First launch on this machine: no stored profile yet — seed one from
-    // what this launch resolved so the key, base URL, and model stick.
+    // what this launch resolved so base URL, model and last tool stick. An
+    // ephemeral (--key / env) key is dropped here on purpose: only the login
+    // flow persists secrets to disk.
     cfg.profiles
         .entry(cfg.active_profile.clone())
-        .or_insert_with(|| profile.clone());
+        .or_insert_with(|| {
+            let mut seeded = profile.clone();
+            if ephemeral_key {
+                seeded.api_key = None;
+            }
+            seeded
+        });
     cfg.last_tool = Some(tool_name.to_string());
     if aliases_changed {
         if let Some(p) = cfg.profiles.get_mut(&cfg.active_profile) {

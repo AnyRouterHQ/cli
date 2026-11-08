@@ -984,6 +984,44 @@ fn model_without_value_errors() {
 }
 
 #[test]
+fn launch_does_not_persist_env_or_flag_key_to_config() {
+    // #202: an env-only (or --key) key must stay in the process env; launch
+    // may write config.yaml (last_tool, default_model) but never the secret.
+    let stub_path = exit_zero_stub();
+    let stub = stub_path.to_str().unwrap();
+    for variant in ["env", "flag"] {
+        let home = temp_home();
+        let mut args = vec!["claude", "--yes", "--model", "z-ai/glm-4.7-flash"];
+        if variant == "flag" {
+            args.extend(["--key", "sk-ar-v1-ephemeral-flag-key-0002"]);
+        }
+        let mut cmd = anyr();
+        cmd.args(&args)
+            .env("ANYROUTER_HOME", &home)
+            .env("ANYROUTER_CLAUDE_PATH", stub);
+        if variant == "env" {
+            cmd.env("ANYROUTER_API_KEY", "sk-ar-v1-ephemeral-env-key-0001");
+        } else {
+            cmd.env_remove("ANYROUTER_API_KEY");
+        }
+        let out = cmd.output().expect("launch");
+        assert_eq!(out.status.code().unwrap_or(1), 0, "{variant}");
+        if let Ok(cfg) = std::fs::read_to_string(home.join("config.yaml")) {
+            assert!(
+                !cfg.contains("sk-ar-v1"),
+                "{variant} leaked a key into config.yaml:\n{cfg}"
+            );
+            assert!(cfg.contains("last_tool: claude"), "{variant}:\n{cfg}");
+            assert!(
+                cfg.contains("default_model: z-ai/glm-4.7-flash"),
+                "{variant}:\n{cfg}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[test]
 fn launch_remembers_explicit_model_as_session_default() {
     // Launching with --model must persist it as default_model so a bare
     // `{bin} claude` next time starts with the same model. A trivially
