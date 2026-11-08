@@ -351,6 +351,9 @@ pub fn dir_writable(dest: &Path) -> bool {
 /// between those two renames leaves no `anyr`, with the complete old build
 /// at `.anyr.old`; renaming it back recovers.
 pub fn swap_in(new: &Path, dest: &Path) -> Result<(), String> {
+    // Sweep Windows `.trash-*` slots left by clear_slot: a file still
+    // running fails to delete and stays for the next run.
+    clean_trash(dest);
     let old = sibling(dest, "old");
     clear_slot(&old);
     #[cfg(windows)]
@@ -426,6 +429,16 @@ pub fn clear_stale_downloads(dest: &Path) {
     }
 }
 
+/// Delete a staged build only if it is this install's own `.anyr.pending`.
+/// The state file lives in a shared `~/.anyrouter`, so a pending path naming
+/// another install's staging file must never be deleted by this one.
+pub fn remove_own_pending(dest: &Path, pending_path: &str) {
+    let candidate = PathBuf::from(pending_path);
+    if candidate == sibling(dest, "pending") {
+        let _ = fs::remove_file(&candidate);
+    }
+}
+
 /// Put `.anyr.prev` back. The build being replaced becomes the new prev, so
 /// a second rollback undoes the first.
 pub fn rollback(dest: &Path) -> Result<(), String> {
@@ -462,11 +475,16 @@ pub fn apply_pending(
         return Ok(None);
     };
     let path = PathBuf::from(path);
+    // Only ever delete this install's own staging file: the state file is
+    // shared across installs, and a foreign path must be left on disk.
+    let own_pending = sibling(dest, "pending");
     let discard = |state: &mut UpdateState, path: &Path| {
-        let _ = fs::remove_file(path);
+        if *path == own_pending {
+            let _ = fs::remove_file(path);
+        }
         state.clear_pending();
     };
-    if path != sibling(dest, "pending") || !path.is_file() {
+    if path != own_pending || !path.is_file() {
         discard(state, &path);
         return Ok(None);
     }
@@ -1126,5 +1144,62 @@ mod tests {
         assert!(!trash.exists());
         assert!(!dl.exists());
         assert!(dest.exists() && prev.exists(), "live files must stay");
+    }
+
+    #[test]
+    fn swap_sweeps_trash_files_left_by_clear_slot() {
+        // WHY: on Windows a still-running .prev is renamed to .trash-<secs>
+        // and otherwise survives forever; every swap sweeps them (a file
+        // still running fails to delete and stays for the next run).
+        let dir = tmp_dir("swap-trash");
+        let dest = dir.join("anyr.exe");
+        fs::write(&dest, "old").unwrap();
+        let prev = sibling(&dest, "prev");
+        fs::write(&prev, "prev").unwrap();
+        let trash = sibling(&prev, "trash-123");
+        fs::write(&trash, "old").unwrap();
+        let new = dir.join("new-build");
+        fs::write(&new, "new").unwrap();
+        swap_in(&new, &dest).unwrap();
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "new");
+        assert!(
+            !trash.exists(),
+            "trash file survived the swap that should have swept it"
+        );
+    }
+
+    #[test]
+    fn foreign_pending_path_is_cleared_but_never_deleted() {
+        // WHY: two installs share one ~/.anyrouter state file, so the pending
+        // path may name the other install's staging file; discarding it must
+        // clear the state without deleting that file.
+        let dir = tmp_dir("foreign");
+        let dest_a = dir.join("a/anyr");
+        let dest_b = dir.join("b/anyr");
+        fs::create_dir_all(dest_a.parent().unwrap()).unwrap();
+        fs::create_dir_all(dest_b.parent().unwrap()).unwrap();
+        fs::write(&dest_a, "current-a").unwrap();
+        let foreign_pending = sibling(&dest_b, "pending");
+        fs::write(&foreign_pending, "staged-for-b").unwrap();
+        let mut state = UpdateState {
+            pending_path: Some(foreign_pending.to_string_lossy().into_owned()),
+            pending_version: Some("999.0.0".into()),
+            pending_sha256: Some(crate::upgrade::sha256_hex_file(&foreign_pending).unwrap()),
+            channel: Some("stable".into()),
+            ..UpdateState::default()
+        };
+        let applied = apply_pending(&dest_a, &mut state, Channel::Stable).unwrap();
+        assert_eq!(applied, None);
+        assert_eq!(state.pending_path, None);
+        assert!(
+            foreign_pending.exists(),
+            "applying install A must not delete install B's staged build"
+        );
+        assert_eq!(fs::read_to_string(&dest_a).unwrap(), "current-a");
+        // remove_own_pending guards the upgrade.rs discard sites the same way.
+        remove_own_pending(&dest_a, &foreign_pending.to_string_lossy());
+        assert!(foreign_pending.exists());
+        remove_own_pending(&dest_b, &foreign_pending.to_string_lossy());
+        assert!(!foreign_pending.exists());
     }
 }

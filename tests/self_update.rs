@@ -686,7 +686,8 @@ fn last_check_is_saved_before_the_slow_network_work() {
 
 #[test]
 fn background_check_gives_up_after_its_deadline() {
-    // WHY: the stager must end well inside the lock's staleness window.
+    // WHY: a stager that hangs on the network must stop at its deadline,
+    // not run until its own (60s) request timeouts serialise.
     let mock = serve(
         vec![Release::good("v999.0.0", false)],
         Duration::from_secs(2),
@@ -865,8 +866,8 @@ fn staged_build_applies_on_the_next_tty_start_and_prints_notice() {
 
 #[test]
 fn a_killed_stager_does_not_block_the_next_update() {
-    // WHY: an updater killed mid-check (closed laptop, OOM, kill -9) used to
-    // leave update.lock behind and block every update for 15 minutes.
+    // WHY: the OS frees the lock when the owner dies, so a stager killed
+    // mid-check (closed laptop, OOM, kill -9) never blocks the next update.
     let mock = serve(
         vec![Release::good("v999.0.0", false)],
         Duration::from_secs(30),

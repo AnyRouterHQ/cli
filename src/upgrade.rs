@@ -79,6 +79,7 @@ impl ReleasesFetch {
 pub fn load_releases(
     fixture: Option<&str>,
     env: &BTreeMap<String, String>,
+    deadline: Option<Instant>,
 ) -> Result<Vec<Release>, String> {
     if let Some(path) = fixture {
         let json = fs::read_to_string(path)
@@ -92,10 +93,13 @@ pub fn load_releases(
         }
         return parse_releases(&body);
     }
-    fetch_releases(env)
+    fetch_releases(env, deadline)
 }
 
-fn fetch_releases(env: &BTreeMap<String, String>) -> Result<Vec<Release>, String> {
+fn fetch_releases(
+    env: &BTreeMap<String, String>,
+    deadline: Option<Instant>,
+) -> Result<Vec<Release>, String> {
     let mut api_err = None;
     if let Some(token) = github_token(env) {
         match fetch_releases_api(token) {
@@ -103,7 +107,7 @@ fn fetch_releases(env: &BTreeMap<String, String>) -> Result<Vec<Release>, String
             Err(err) => api_err = Some(err),
         }
     }
-    match fetch_releases_html() {
+    match fetch_releases_html(deadline) {
         Ok(rels) => Ok(rels),
         Err(html_err) => Err(match api_err {
             Some(api) => format!(
@@ -122,13 +126,16 @@ fn fetch_releases_api(token: &str) -> Result<Vec<Release>, String> {
     parse_releases(&body)
 }
 
-fn fetch_releases_html() -> Result<Vec<Release>, String> {
+fn fetch_releases_html(deadline: Option<Instant>) -> Result<Vec<Release>, String> {
     let (status, html) = http_get_web(GITHUB_RELEASES_HTML)?;
     if !(200..300).contains(&status) {
         return Err(releases_http_error(status, &html));
     }
     let mut releases = parse_releases_html(&html)?;
     for rel in &mut releases {
+        if let Some(d) = deadline {
+            check_deadline(d)?;
+        }
         if !rel.assets.is_empty() {
             continue;
         }
@@ -736,6 +743,12 @@ pub(crate) fn try_lock(env: &BTreeMap<String, String>) -> Result<UpdateLock, Str
 /// binary and never prints; every failure lands in the state file.
 fn run_auto(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, String> {
     let Ok(_lock) = try_lock(env) else {
+        // Could not lock (another stager holds it, or the filesystem cannot
+        // lock at all). Record the check anyway so every command does not
+        // respawn a stager that exits at once until the next interval.
+        let mut state = UpdateState::load(env);
+        state.last_check = crate::autoupdate::now_secs();
+        state.save(env);
         return Ok(0);
     };
     let mut state = UpdateState::load(env);
@@ -746,6 +759,9 @@ fn run_auto(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, 
     // out must not be respawned by every command until the next interval.
     state.last_check = crate::autoupdate::now_secs();
     state.save(env);
+    // The old updater wrote update.stamp / update.notice; #190 stopped
+    // reading them, so sweep them now that the lock proves we own the run.
+    remove_legacy_stamp_files(env);
     if let Ok(dest) = install_dest() {
         crate::autoupdate::clean_trash(&dest);
     }
@@ -754,12 +770,19 @@ fn run_auto(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, 
     Ok(0)
 }
 
+/// Best-effort removal of the pre-#190 bookkeeping files.
+fn remove_legacy_stamp_files(env: &BTreeMap<String, String>) {
+    let dir = state_dir(env);
+    let _ = fs::remove_file(dir.join("update.stamp"));
+    let _ = fs::remove_file(dir.join("update.notice"));
+}
+
 /// Candidates the background stager tries, newest first. Falling further
 /// back is for a person running `anyr update`.
 const AUTO_MAX_CANDIDATES: usize = 2;
 
-/// Hard stop for one background run, well under the 15-minute lock staleness.
-/// Each request is also capped at 60s by its own timeout.
+/// Hard stop for one background run. Each request is also capped at 60s
+/// by its own timeout; the OS lock frees as soon as the owner exits.
 const AUTO_DEADLINE_SECS: u64 = 5 * 60;
 
 fn auto_deadline(env: &BTreeMap<String, String>) -> Instant {
@@ -786,7 +809,7 @@ fn auto_stage(
     let channel = resolve_channel(parsed, env)?;
     state.channel = Some(channel.as_str().into());
     let fixture = fixture_path(parsed, env);
-    let releases = load_releases(fixture.as_deref(), env)?;
+    let releases = load_releases(fixture.as_deref(), env, Some(deadline))?;
     check_deadline(deadline)?;
     let os = current_os();
     let arch = current_arch();
@@ -890,7 +913,7 @@ fn run_rollback(env: &BTreeMap<String, String>) -> Result<i32, String> {
     crate::autoupdate::rollback(&dest)?;
     let mut state = UpdateState::load(env);
     if let Some(p) = state.pending_path.take() {
-        let _ = fs::remove_file(p);
+        crate::autoupdate::remove_own_pending(&dest, &p);
     }
     state.clear_pending();
     state.skip_version = Some(VERSION.to_string());
@@ -974,7 +997,8 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
     let switch = channel_switch_flag(parsed)?;
     if let Some(ch) = switch {
         // A staged build belongs to the channel it was found on: drop it so a
-        // beta cannot apply after switching to stable.
+        // beta cannot apply after switching to stable. Only delete this
+        // install's own staging file; the state file is shared.
         let _lock = try_lock(env)?;
         let changed = persist_channel(ch, env)?;
         if changed {
@@ -982,14 +1006,16 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
         }
         let mut state = UpdateState::load(env);
         if let Some(p) = state.pending_path.take() {
-            let _ = fs::remove_file(p);
+            if let Ok(dest) = install_dest() {
+                crate::autoupdate::remove_own_pending(&dest, &p);
+            }
         }
         state.clear_pending();
         state.save(env);
     }
     let channel = resolve_channel(parsed, env)?;
     let fixture = fixture_path(parsed, env);
-    let releases = match load_releases(fixture.as_deref(), env) {
+    let releases = match load_releases(fixture.as_deref(), env, None) {
         Ok(releases) => releases,
         Err(err) => {
             // Listing releases is best-effort: a weird page (rate limit,
@@ -1133,7 +1159,9 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
             spinner.succeed(&updated_line(rel.version_str()));
             let mut state = UpdateState::load(env);
             if let Some(p) = state.pending_path.take() {
-                let _ = fs::remove_file(p);
+                if let Ok(dest) = install_dest() {
+                    crate::autoupdate::remove_own_pending(&dest, &p);
+                }
             }
             state.clear_pending();
             state.skip_version = None;
@@ -1441,7 +1469,8 @@ mod tests {
         (env, dir)
     }
 
-    /// Make the lock file look 1 h old, past the old 15-minute staleness.
+    /// Make the lock file look 1 h old. The OS lock ignores mtime (the old
+    /// time-based staleness rule is gone), so backdating must not matter.
     fn backdate(path: &Path) {
         let old = std::time::SystemTime::now() - Duration::from_secs(60 * 60);
         fs::OpenOptions::new()
@@ -1454,8 +1483,8 @@ mod tests {
 
     #[test]
     fn concurrent_lockers_of_an_old_lock_file_get_one_owner() {
-        // WHY: two stagers that both judged an old lock stale could both
-        // take it and race on the same pending build.
+        // WHY: two stagers racing the OS lock on the same file must yield
+        // exactly one owner, never two racing on the same pending build.
         use std::sync::{Arc, Barrier};
         let (env, dir) = isolated_home();
         let path = dir.join("update.lock");
@@ -1477,15 +1506,16 @@ mod tests {
                 .collect();
             let guards: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
             let owners = guards.iter().filter(|g| g.is_some()).count();
-            assert!(owners <= 1, "{owners} processes hold the update lock");
+            assert_eq!(owners, 1, "{owners} processes hold the update lock");
         }
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn dropping_a_lock_never_frees_a_newer_owner() {
-        // WHY: an updater slow enough to look stale must not, on exit, delete
-        // the lock a newer updater holds and let a third one in.
+        // WHY: dropping one owner's guard must not free the file out from
+        // under a newer owner and let a third one in. (No staleness rule:
+        // the kernel frees the lock only when its owner exits.)
         let (env, dir) = isolated_home();
         let a = try_lock(&env).expect("first lock");
         backdate(&dir.join("update.lock"));
@@ -1502,7 +1532,8 @@ mod tests {
 
     #[test]
     fn a_lock_left_by_a_dead_updater_is_free_at_once() {
-        // WHY: a killed updater must not block every update for 15 minutes.
+        // WHY: the OS frees the lock when the owner dies, so a killed
+        // updater never blocks the next update.
         let (env, dir) = isolated_home();
         let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
             .args(if cfg!(windows) {
@@ -1514,9 +1545,57 @@ mod tests {
             .unwrap();
         let dead = child.id();
         child.wait().unwrap();
-        // A fresh file, so the time-based fallback cannot be what frees it.
+        // A fresh file: the stale pid text alone must not hold the lock.
         fs::write(dir.join("update.lock"), format!("{dead}\n")).unwrap();
         assert!(try_lock(&env).is_ok(), "dead updater still holds the lock");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_auto_records_last_check_when_the_lock_is_held() {
+        // WHY: a stager that cannot lock must still record the check, or
+        // every command respawns one that exits at once until the interval.
+        let (env, dir) = isolated_home();
+        let _lock = try_lock(&env).expect("first lock");
+        assert_eq!(UpdateState::load(&env).last_check, 0);
+        let parsed = ParsedArgs {
+            command: "update".into(),
+            flags: std::collections::HashMap::from([(
+                "auto".into(),
+                crate::parse::FlagValue::Bool(true),
+            )]),
+            passthrough: Vec::new(),
+            raw_from: None,
+        };
+        run_auto(&parsed, &env).unwrap();
+        assert_ne!(
+            UpdateState::load(&env).last_check,
+            0,
+            "lock failure must still record last_check"
+        );
+        drop(_lock);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_auto_removes_legacy_stamp_and_notice_files() {
+        // WHY: the pre-#190 updater wrote update.stamp / update.notice, which
+        // nothing reads anymore; the stager sweeps them once it holds the lock.
+        let (env, dir) = isolated_home();
+        fs::write(dir.join("update.stamp"), "old").unwrap();
+        fs::write(dir.join("update.notice"), "old").unwrap();
+        let parsed = ParsedArgs {
+            command: "update".into(),
+            flags: std::collections::HashMap::from([(
+                "auto".into(),
+                crate::parse::FlagValue::Bool(true),
+            )]),
+            passthrough: Vec::new(),
+            raw_from: None,
+        };
+        run_auto(&parsed, &env).unwrap();
+        assert!(!dir.join("update.stamp").exists());
+        assert!(!dir.join("update.notice").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1765,7 +1844,7 @@ mod tests {
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("releases.json");
         fs::write(&path, json).unwrap();
-        let rels = load_releases(Some(path.to_str().unwrap()), &BTreeMap::new()).unwrap();
+        let rels = load_releases(Some(path.to_str().unwrap()), &BTreeMap::new(), None).unwrap();
         let err = select_latest_release_with_asset(&rels, Channel::Stable, "anyr-linux-x86_64")
             .unwrap_err();
         assert_ne!(err, "GitHub Releases API HTTP 403");

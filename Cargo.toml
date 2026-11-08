@@ -2,6 +2,7 @@
 name = "anyr-cli"
 version = "0.1.38" # x-release-please-version
 edition = "2021"
+rust-version = "1.89"
 description = "AnyRouter CLI — native binary"
 license = "MIT"
 repository = "https://github.com/AnyRouterHQ/cli"
