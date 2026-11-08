@@ -1823,7 +1823,7 @@ fn update_spinner_animates_on_tty() {
     ));
     std::fs::create_dir_all(&home).expect("home");
     let helper = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(".cursor/skills/verify-anyr/helpers/pty-anyr.py");
+        .join(".agents/skills/verify-anyr/helpers/pty-anyr.py");
     let transcript = home.join("tty.txt");
     let out = Command::new("python3")
         .args([

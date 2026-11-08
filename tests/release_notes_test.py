@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""release-please-style notes: this version plus older versions."""
+"""release-please-style notes: only the tagged version."""
 from __future__ import annotations
 
 import sys
@@ -41,14 +41,17 @@ class FormatTests(unittest.TestCase):
         self.assertIn(sha, line)
         self.assertIsNone(rn.format_item(sha, "chore(cli): drop GitHub Pages"))
 
-    def test_github_notes_are_full_history_from_tag(self) -> None:
+    def test_github_notes_are_only_the_tagged_version(self) -> None:
+        # WHY: full=True made every release page repeat the whole changelog
+        # (v0.1.37 was 44k chars / 38 versions). Release notes are one version.
         versions = rn.parse_changelog(SAMPLE)
-        notes = rn.notes_from(versions, "v0.1.8", full=True)
+        notes = rn.notes_from(versions, "v0.1.8", full=False)
         self.assertTrue(notes.startswith("## [0.1.8]"))
-        self.assertIn("## [0.1.7]", notes)
-        only = rn.notes_from(versions, "v0.1.7", full=True)
+        self.assertNotIn("## [0.1.7]", notes)
+        only = rn.notes_from(versions, "v0.1.7", full=False)
         self.assertTrue(only.startswith("## [0.1.7]"))
         self.assertNotIn("## [0.1.8]", only)
+        self.assertEqual(notes.count("## ["), 1)
 
 
 class LiveChangelogTests(unittest.TestCase):
@@ -56,9 +59,10 @@ class LiveChangelogTests(unittest.TestCase):
         text = rn.CHANGELOG.read_text(encoding="utf-8")
         self.assertIn("googleapis/release-please", text)
         self.assertIn("## [0.1.8](https://github.com/anyrouter-dev/cli/compare/v0.1.7...v0.1.8)", text)
-        notes = rn.notes_from(rn.parse_changelog(text), "v0.1.8", full=True)
-        self.assertIn("## [0.1.0]", notes)
+        notes = rn.notes_from(rn.parse_changelog(text), "v0.1.8", full=False)
+        self.assertNotIn("## [0.1.0]", notes)
         self.assertIn("## [0.1.8]", notes)
+        self.assertEqual(notes.count("## ["), 1)
 
 
 if __name__ == "__main__":

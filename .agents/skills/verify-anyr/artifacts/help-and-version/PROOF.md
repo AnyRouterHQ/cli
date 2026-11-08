@@ -2,24 +2,24 @@
 
 Feature: `help-and-version`
 Entry points driven: `anyr --help`, non-TTY empty argv, `anyr --version`, `anyr auth --help`, `anyr claude --help`, `anyr task --help`, `anyr nope`
-Harness: `.cursor/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `test`, `cleanup`)
+Harness: `.agents/skills/verify-anyr/control-anyr` (`launch`, `doctor`, `cli`, `test`, `cleanup`)
 Binary: `target/debug/anyr` from this checkout (`0.1.11`)
 Isolated home: `/tmp/anyr-verify-20260901-170042-5328/home` (removed by cleanup)
 
 ## Commands
 
 ```bash
-.cursor/skills/verify-anyr/control-anyr launch
-.cursor/skills/verify-anyr/control-anyr doctor
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/help.txt -- --help
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/no-args.txt --
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/version.txt -- --version
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/auth-help.txt -- auth --help
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/claude-help.txt -- claude --help
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/task-help.txt -- task --help
-.cursor/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/unknown.txt -- nope
-.cursor/skills/verify-anyr/control-anyr test -- --test cli help_lists_login_claude_account_and_spawn_targets
-.cursor/skills/verify-anyr/control-anyr cleanup
+.agents/skills/verify-anyr/control-anyr launch
+.agents/skills/verify-anyr/control-anyr doctor
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/help.txt -- --help
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/no-args.txt --
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/version.txt -- --version
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/auth-help.txt -- auth --help
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/claude-help.txt -- claude --help
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/task-help.txt -- task --help
+.agents/skills/verify-anyr/control-anyr cli --out artifacts/help-and-version/unknown.txt -- nope
+.agents/skills/verify-anyr/control-anyr test -- --test cli help_lists_login_claude_account_and_spawn_targets
+.agents/skills/verify-anyr/control-anyr cleanup
 ```
 
 ## Results
