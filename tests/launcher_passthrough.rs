@@ -15,7 +15,7 @@ const AGENTS: &[(&str, &[&str])] = &[
     ("grok", &["--always-approve"]),
     ("opencode", &["--auto"]),
     ("pi", &[]),
-    ("pool", &["--unsafe-auto-allow"]),
+    ("pool", &["--mode", "always-allow"]),
     ("qwen", &["--approval-mode", "yolo"]),
     ("aider", &["--yes-always"]),
     ("crush", &["-y"]),
@@ -258,19 +258,15 @@ fn cc_alias_forwards_like_claude() {
 }
 
 #[test]
-fn pool_yolo_passes_unsafe_auto_allow_and_not_yolo() {
+fn pool_yolo_passes_mode_always_allow_and_not_yolo() {
     let got = dry_run("pool", &["--yolo", "--dry-run"]);
     assert_eq!(got.code, 0, "{}", got.stderr);
+    assert_eq!(count_run(&got.args, &["--mode"]), 1, "{:?}", got.args);
+    assert_eq!(count_run(&got.args, &["always-allow"]), 1, "{:?}", got.args);
+    assert_eq!(count_run(&got.args, &["--yolo"]), 0, "{:?}", got.args);
     assert_eq!(
         count_run(&got.args, &["--unsafe-auto-allow"]),
-        1,
-        "{:?}",
-        got.args
-    );
-    assert!(
-        !got.args
-            .iter()
-            .any(|a| a == "--yolo" || a == "always-allow"),
+        0,
         "{:?}",
         got.args
     );

@@ -217,7 +217,7 @@ pub(crate) const ALIASES: &[Alias] = &[
             ),
             (
                 "pool",
-                argv(&["--unsafe-auto-allow"], &["--unsafe-auto-allow"])
+                argv(&["--mode", "always-allow"], &["--mode"])
                     .check(Check::Docs)
                     .native(),
             ),
