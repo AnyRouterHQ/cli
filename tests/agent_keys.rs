@@ -54,7 +54,10 @@ fn anyr_env(
         .unwrap();
     let mut pipe = child.stdin.take().unwrap();
     if let Some(input) = stdin {
-        pipe.write_all(input.as_bytes()).unwrap();
+        // The child refuses the key before reading stdin; the write then hits a closed pipe.
+        if let Err(err) = pipe.write_all(input.as_bytes()) {
+            assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe, "{err}");
+        }
     }
     drop(pipe);
     let out = child.wait_with_output().unwrap();
