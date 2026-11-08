@@ -10,6 +10,28 @@ GitHub Releases use this file as the release notes (full history through that ta
 
 * **cli:** add `anyr decision` for typed `POST /api/v1/decisions` requests with flag or stdin JSON input. Known Decisions models are refused by chat-agent launchers. ([duyet/anyrouter#3550](https://github.com/duyet/anyrouter/issues/3550))
 
+## [0.1.39](https://github.com/AnyRouterHQ/cli/compare/v0.1.38...v0.1.39) (2026-11-08)
+
+
+### Features
+
+* **artifact:** support capabilities.owner_data on publish and visibility ([ffcb4a9](https://github.com/AnyRouterHQ/cli/commit/ffcb4a99b51491fbb4e11ca86df0da0dbd2db137)), closes [#227](https://github.com/AnyRouterHQ/cli/issues/227)
+* **launch:** print settled plan as JSON on --json --dry-run ([b83d5f0](https://github.com/AnyRouterHQ/cli/commit/b83d5f070930f6cb031ec3ce5ade36d95da327dd))
+* **telemetry:** add once-per-day active-users ping to PostHog ([26cba33](https://github.com/AnyRouterHQ/cli/commit/26cba339699f6fd7fc613ed2c87a07a1b93881f1))
+* **tui:** let the command palette fill the terminal height ([fd972c6](https://github.com/AnyRouterHQ/cli/commit/fd972c6f43ce0460c95c9b5fcfdad3206410c484))
+* **update:** background auto-upgrade for launcher and agent sessions ([372e9e5](https://github.com/AnyRouterHQ/cli/commit/372e9e5294f27908bcc734d12c2a969be213aae5))
+
+
+### Bug Fixes
+
+* **artifact:** match per-plan file caps and show quota refusals as-is ([6a43e25](https://github.com/AnyRouterHQ/cli/commit/6a43e25e4b31da189bb6673caa0df51b1ea18abd)), closes [#250](https://github.com/AnyRouterHQ/cli/issues/250)
+* **launch:** never persist env/--key API keys to config.yaml; relay: pool sync uses live device id, 409 gets its own message ([98633b2](https://github.com/AnyRouterHQ/cli/commit/98633b233d173d71c4cedc022fbe97df70394b99))
+* **launch:** opencode auto registers anyrouter/auto and sets session model ([920adfa](https://github.com/AnyRouterHQ/cli/commit/920adfaaeac8af7432ed9f8eed0d0f6d1054cabc)), closes [#230](https://github.com/AnyRouterHQ/cli/issues/230)
+* **pool:** --yolo passes --mode always-allow for interactive pool ([83bc7f3](https://github.com/AnyRouterHQ/cli/commit/83bc7f3612249826742986bf03af77c04baec1fb)), closes [#214](https://github.com/AnyRouterHQ/cli/issues/214)
+* **self-update:** [#208](https://github.com/AnyRouterHQ/cli/issues/208) follow-ups and [#194](https://github.com/AnyRouterHQ/cli/issues/194) trash/legacy cleanup ([7c8b87b](https://github.com/AnyRouterHQ/cli/commit/7c8b87be193e10fccd947a5e799de74db32dec69))
+* **test:** close [#223](https://github.com/AnyRouterHQ/cli/issues/223) follow-ups ([3c8fcef](https://github.com/AnyRouterHQ/cli/commit/3c8fcefd8a2e70a9b1b41cfd1bfa9858383c95af))
+* **test:** pin fixture LF; keep SystemRoot/WINDIR/PATH for Windows detached daily-telemetry child ([ecc8096](https://github.com/AnyRouterHQ/cli/commit/ecc809653444ddd986c054bd28211dfcf4e90bf2))
+
 ## [0.1.38](https://github.com/AnyRouterHQ/cli/compare/v0.1.37...v0.1.38) (2026-11-08)
 
 
