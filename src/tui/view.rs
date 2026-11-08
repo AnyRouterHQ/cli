@@ -657,9 +657,25 @@ fn in_rect(r: Rect, col: u16, row: u16) -> bool {
         && row < r.y.saturating_add(r.height)
 }
 
-/// Live palette shows at most this many filtered rows; the window follows
-/// the cursor so Enter never selects a row that is off-screen.
-const PALETTE_LIVE_ROWS: usize = 10;
+/// Live palette shows as many filtered rows as the current height allows.
+/// The window follows the cursor so Enter never selects a row that is off-screen.
+/// Group headers and the gap lines between groups count against the height.
+fn palette_visible(area: Rect, state: &PaletteState, status: u16) -> (usize, usize, usize) {
+    let filtered = state.filtered();
+    let avail = area.height.saturating_sub(status + 4).max(1) as usize;
+    let mut visible = filtered.len().min(avail).max(1);
+    for _ in 0..4 {
+        let groups = palette_groups(state, &filtered, visible);
+        let overhead = 2 * groups.saturating_sub(1);
+        let capped = filtered.len().min(avail.saturating_sub(overhead).max(1));
+        if capped == visible {
+            return (visible, groups, overhead);
+        }
+        visible = capped;
+    }
+    let groups = palette_groups(state, &filtered, visible);
+    (visible, groups, 2 * groups.saturating_sub(1))
+}
 
 fn palette_window(cursor: usize, n: usize, max: usize) -> (usize, usize) {
     if n == 0 {
@@ -676,15 +692,11 @@ fn palette_window(cursor: usize, n: usize, max: usize) -> (usize, usize) {
 }
 
 fn palette_chunks(area: Rect, state: &PaletteState) -> (Vec<Rect>, usize) {
-    let filtered = state.filtered();
     let status = state.header.len().max(1) as u16;
-    let (_, visible) = palette_window(state.cursor, filtered.len(), PALETTE_LIVE_ROWS);
-    let groups = palette_groups(state, &filtered, visible);
-    let between = groups.saturating_sub(1);
-    let results = (visible.max(1) + groups + between) as u16;
+    let (visible, _groups, overhead) = palette_visible(area, state, status);
+    let results = (visible.max(1) + overhead) as u16;
     let rows = [status, 1, 1, results, 1, 1];
-    let height = rows.iter().sum();
-    (split(top_left(area, height), &rows, PL_RESULTS), visible)
+    (split(area, &rows, PL_RESULTS), visible)
 }
 
 /// Filtered-row index under the cell, skipping group headers and gaps.
