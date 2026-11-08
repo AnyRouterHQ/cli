@@ -362,7 +362,7 @@ fn update_listing_failure_stays_silent_like_no_new_version() {
     assert!(!stderr.contains("error"), "{stderr}");
     let state = install.state();
     assert!(
-        state["last_error"].as_str().unwrap_or_default().len() > 0,
+        !state["last_error"].as_str().unwrap_or_default().is_empty(),
         "{state}"
     );
     assert_eq!(fs::read(&install.bin).unwrap(), install.original);
