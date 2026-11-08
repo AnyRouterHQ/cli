@@ -3208,7 +3208,22 @@ impl doctor::Probe for SystemProbe<'_> {
         CHAT_PROBES
             .iter()
             .filter(|(_, _, health)| http_probe_listening(health))
-            .map(|(label, base, _)| format!("{label} ({base})"))
+            .map(|(label, base, _)| {
+                let models = fetch_local_models(base);
+                if models.is_empty() {
+                    format!("{label} ({base}): no models listed")
+                } else {
+                    let mut names = models.join(", ");
+                    if names.chars().count() > 120 {
+                        names = format!(
+                            "{}… (+{} more)",
+                            names.chars().take(120).collect::<String>(),
+                            models.len().saturating_sub(3)
+                        );
+                    }
+                    format!("{label} ({base}): {} models — {names}", models.len())
+                }
+            })
             .collect()
     }
     fn network(&self) -> Result<(), String> {

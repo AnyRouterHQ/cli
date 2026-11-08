@@ -407,6 +407,11 @@ The relay detects the on-device models this Mac can serve:
 
 - `apple/foundation-model`: macOS 26+ with Apple Intelligence on, via `fm serve`.
 - `perplexity/pplx-decider-flash-v1.2`: the Decider for Mac app (port 8080).
+- Ollama at `localhost:11434`: the relay probes `/v1/models`, advertises the pulled
+  model tags (e.g. `llama3.2:latest`, `qwen2.5:7b`) in its hello frame, and serves
+  them like any other chat endpoint. `anyr relay doctor` and `anyr relay models`
+  list the detected Ollama tags. Ollama has to be serving already (`ollama serve`
+  or the app); the relay does not start it for you.
 
 The first `start` at a terminal opens a checklist (space toggles, enter
 starts) and saves the answer; change it later with `anyr relay models
