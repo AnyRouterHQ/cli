@@ -55,6 +55,8 @@ pub(super) trait Probe {
     fn macos_major(&self) -> Option<u32>;
     /// None = not listening; else fm serve's own model ids (system, pcc).
     fn fm_serve(&self) -> Option<Vec<String>>;
+    /// The in-process Apple system model is available (macOS 26+ helper).
+    fn in_process_foundation(&self) -> bool;
     fn decider(&self) -> bool;
     /// The server's app or command is on this machine (not whether it runs).
     fn installed(&self, server: OnDeviceModel) -> bool;
@@ -149,7 +151,8 @@ pub(super) fn run_checks(p: &dyn Probe, bin: &str) -> Vec<Check> {
     };
 
     let fm_ids = if apple_ok { p.fm_serve() } else { None };
-    let fm = fm_ids.is_some();
+    let in_process = apple_ok && p.in_process_foundation();
+    let fm = fm_ids.is_some() || in_process;
     let off_mac_fix = "serve Ollama or LM Studio, or pass --target <url>";
     let apple = OnDeviceModel::AppleFoundation;
     if !apple_ok {
@@ -177,6 +180,16 @@ pub(super) fn run_checks(p: &dyn Probe, bin: &str) -> Vec<Check> {
                     "fm serve",
                     Level::Ok,
                     format!("listening on 127.0.0.1:1976, models: {}", ids.join(", ")),
+                    "",
+                ),
+                apple,
+                "running",
+            ),
+            None if in_process => for_model(
+                check(
+                    "fm serve",
+                    Level::Ok,
+                    "Apple system model serving in-process (foundation-model); fm serve not needed",
                     "",
                 ),
                 apple,
@@ -315,6 +328,7 @@ mod tests {
         mac: bool,
         major: Option<u32>,
         fm: Option<Vec<String>>,
+        in_process: bool,
         decider: bool,
         installed: bool,
         others: Vec<String>,
@@ -329,6 +343,7 @@ mod tests {
                 mac: true,
                 major: Some(26),
                 fm: Some(vec!["system".into(), "pcc".into()]),
+                in_process: false,
                 decider: true,
                 installed: true,
                 others: vec![],
@@ -348,6 +363,9 @@ mod tests {
         }
         fn fm_serve(&self) -> Option<Vec<String>> {
             self.fm.clone()
+        }
+        fn in_process_foundation(&self) -> bool {
+            self.in_process
         }
         fn decider(&self) -> bool {
             self.decider
@@ -562,5 +580,24 @@ mod tests {
         assert_eq!(j["ok"], false);
         assert_eq!(j["checks"][0]["fix"], Value::Null);
         assert_eq!(j["checks"][1]["status"], "fail");
+    }
+
+    #[test]
+    fn in_process_foundation_counts_as_served() {
+        let c = run_checks(
+            &Fake {
+                fm: None,
+                in_process: true,
+                decider: false,
+                installed: false,
+                ..Fake::default()
+            },
+            "anyr",
+        );
+        assert!(!failed(&c), "{c:?}");
+        let check = get(&c, "fm serve");
+        assert_eq!(check.level, Level::Ok);
+        assert!(check.detail.contains("in-process"), "{}", check.detail);
+        assert_eq!(check.model.unwrap().1, "running");
     }
 }

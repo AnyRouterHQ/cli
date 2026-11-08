@@ -48,6 +48,7 @@ mod daemon;
 mod devices;
 mod devname;
 mod doctor;
+mod foundation;
 mod live;
 mod servers;
 mod state;
@@ -204,6 +205,7 @@ struct RequestFrame {
 }
 
 /// Device → cloud frames.
+#[derive(Debug)]
 enum ClientFrame {
     Head {
         id: String,
@@ -488,12 +490,16 @@ fn persist_api_key(key: &str, env: &BTreeMap<String, String>) -> Result<(), Stri
 // Target detection
 // ---------------------------------------------------------------------------
 
-/// What a local endpoint speaks: OpenAI-style chat completions, or the
-/// Perplexity Decisions shape (`POST /v1/decisions` only).
+/// What a local endpoint speaks: OpenAI-style chat completions, the
+/// Perplexity Decisions shape (`POST /v1/decisions` only), or the Apple system
+/// model in-process. The in-process endpoint answers chat completions with no
+/// HTTP server behind it (`foundation::foundation_model_available`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TargetKind {
     Chat,
     Decider,
+    /// Apple system model, served in-process by `foundation`.
+    Foundation,
 }
 
 impl TargetKind {
@@ -501,7 +507,14 @@ impl TargetKind {
         match self {
             TargetKind::Chat => "chat",
             TargetKind::Decider => "decider",
+            TargetKind::Foundation => "foundation",
         }
+    }
+
+    /// Chat-shaped (`/chat/completions`) endpoints: the plain HTTP servers and
+    /// the in-process Apple system model. Decisions never go here.
+    fn is_chat_shape(self) -> bool {
+        matches!(self, TargetKind::Chat | TargetKind::Foundation)
     }
 }
 
@@ -560,15 +573,25 @@ impl Router {
         }
     }
 
+    /// The only chat-shaped target (plain HTTP chat server or the in-process
+    /// Apple system model): it takes every chat request, listed model or not.
+    fn lone_chat_capable(&self) -> Option<&Target> {
+        let mut of_chat = self.targets.iter().filter(|t| t.kind.is_chat_shape());
+        match (of_chat.next(), of_chat.next()) {
+            (Some(t), None) => Some(t),
+            _ => None,
+        }
+    }
+
     /// Pick the target for a request by its body `model`. Decisions go only
-    /// to a Decider, everything else only to a chat target.
+    /// to a Decider, everything else only to a chat-shaped target.
     fn route(&self, path: &str, body: &str) -> Result<&Target, String> {
-        let want = if path.trim_end_matches('/').ends_with("/decisions") {
-            TargetKind::Decider
-        } else {
-            TargetKind::Chat
-        };
-        if let Some(t) = self.lone_of_kind(want) {
+        let want_decider = path.trim_end_matches('/').ends_with("/decisions");
+        if want_decider {
+            if let Some(t) = self.lone_of_kind(TargetKind::Decider) {
+                return Ok(t);
+            }
+        } else if let Some(t) = self.lone_chat_capable() {
             return Ok(t);
         }
         let model = serde_json::from_str::<serde_json::Value>(body)
@@ -580,7 +603,7 @@ impl Router {
         match self.by_model.get(&model) {
             Some(&i) => {
                 let t = &self.targets[i];
-                if t.kind == want {
+                if t.kind.is_chat_shape() != want_decider {
                     Ok(t)
                 } else {
                     Err(format!(
@@ -698,24 +721,54 @@ fn decider_target(base: &str) -> Target {
     }
 }
 
+/// The Apple system model hosted in-process by `foundation`. No HTTP server
+/// is behind it; `base` is a label for logs and the status screen. Requests
+/// the router sends here take the `handle_foundation_request` path.
+fn foundation_target() -> Target {
+    Target {
+        label: "Apple Foundation Models".to_string(),
+        base: FOUNDATION_BASE.to_string(),
+        kind: TargetKind::Foundation,
+        models: vec![FM_SERVE_ADVERTISED_MODEL_ID.to_string()],
+        fm_models: None,
+    }
+}
+
+/// Base label of the in-process Apple system model endpoint. Not a URL: the
+/// driver answers directly, so nothing is ever opened or dialed on it.
+const FOUNDATION_BASE: &str = "foundation://in-process";
+
 /// Whether an on-device server answers the way discovery requires: any
 /// response for a chat server, a real decision for a Decider (8080 is a
-/// common dev port).
+/// common dev port), or an in-process Apple system model.
 fn on_device_listening(spec: &servers::ServerSpec) -> bool {
     match spec.kind {
         TargetKind::Chat => http_probe_listening(spec.health.url()),
         TargetKind::Decider => probe_decider(spec.base),
+        TargetKind::Foundation => foundation::foundation_model_available(),
     }
 }
 
 /// Probe every known local endpoint (all of them, not first-wins).
 fn discover_targets() -> Vec<Target> {
     let mut out = Vec::new();
+    // The in-process Apple system model comes first: when it is available it
+    // owns the pool join key (`foundation-model`), and the HTTP `fm serve`
+    // endpoint is never materialized as a target, so the join key is claimed
+    // exactly once. Otherwise the HTTP `fm serve` probe below still serves.
+    let in_process = foundation::foundation_model_available();
+    if in_process {
+        out.push(foundation_target());
+    }
     for spec in &servers::SERVERS {
+        if in_process && spec.base == FM_SERVE_TARGET {
+            continue;
+        }
         if on_device_listening(spec) {
             out.push(match spec.kind {
                 TargetKind::Chat => chat_target(spec.endpoint, spec.base),
                 TargetKind::Decider => decider_target(spec.base),
+                TargetKind::Foundation => foundation_target(),
             });
         }
     }
@@ -797,6 +850,10 @@ impl OnDeviceDetector for SystemDetector {
             } else if !cfg!(target_os = "macos") {
                 return Err(format!("needs a Mac on macOS {min}+"));
             }
+        }
+        // The Apple model can also answer in-process, with no HTTP server up.
+        if model == OnDeviceModel::AppleFoundation && foundation::foundation_model_available() {
+            return Ok(());
         }
         if on_device_listening(spec) {
             return Ok(());
@@ -956,11 +1013,15 @@ fn select_models(
 }
 
 /// Drop discovered on-device endpoints the user did not choose. Other local
-/// servers (Ollama, LM Studio, …) are untouched.
+/// servers (Ollama, LM Studio, …) are untouched. The in-process Apple system
+/// model endpoint is kept only while `AppleFoundation` is selected.
 fn keep_selected(targets: Vec<Target>, serve: &BTreeSet<OnDeviceModel>) -> Vec<Target> {
     targets
         .into_iter()
         .filter(|t| {
+            if t.kind == TargetKind::Foundation {
+                return serve.contains(&OnDeviceModel::AppleFoundation);
+            }
             OnDeviceModel::ALL
                 .into_iter()
                 .find(|m| m.base() == t.base)
@@ -1249,6 +1310,67 @@ fn handle_request(
     let _ = tx.send(ClientFrame::Done {
         id: frame.id.clone(),
     });
+}
+
+/// Serve one request frame from the in-process Apple system model and stream
+/// the answer back as `head`/`chunk`/`done` frames through `tx`. Runs on its
+/// own thread; `cancel` aborts the generation between snapshots. Only chat
+/// completions are answered — every other path is an error frame.
+fn handle_foundation_request(
+    tx: &mpsc::SyncSender<ClientFrame>,
+    frame: &RequestFrame,
+    cancel: &AtomicBool,
+) {
+    if cancel.load(Ordering::SeqCst) {
+        return;
+    }
+    if !frame.path.is_empty() && !frame.path.contains("chat/completions") {
+        let _ = tx.send(ClientFrame::Error {
+            id: frame.id.clone(),
+            message: format!("local relay does not serve {}", frame.path),
+        });
+        return;
+    }
+    let mut session = match foundation::FmSession::from_chat_body(&frame.id, &frame.body) {
+        Ok(session) => session,
+        Err(message) => {
+            let _ = tx.send(ClientFrame::Error {
+                id: frame.id.clone(),
+                message,
+            });
+            return;
+        }
+    };
+    let tx = tx.clone();
+    let id = frame.id.clone();
+    foundation::run_foundation_model(&mut session, cancel, move |event| {
+        if matches!(&event, foundation::FmEvent::Error(_)) {
+            vlog(&format!("request {id} failed"));
+        }
+        let _ = tx.send(foundation_client_frame(&id, event));
+    });
+}
+
+fn foundation_client_frame(id: &str, event: foundation::FmEvent) -> ClientFrame {
+    match event {
+        foundation::FmEvent::Head {
+            status,
+            content_type,
+        } => ClientFrame::Head {
+            id: id.to_string(),
+            status,
+            content_type,
+        },
+        foundation::FmEvent::Chunk(data) => ClientFrame::Chunk {
+            id: id.to_string(),
+            data,
+        },
+        foundation::FmEvent::Done => ClientFrame::Done { id: id.to_string() },
+        foundation::FmEvent::Error(message) => ClientFrame::Error {
+            id: id.to_string(),
+            message,
+        },
+    }
 }
 
 /// Longest prefix of `bytes` that can be flushed: everything except a
@@ -1745,10 +1867,14 @@ fn serve_connection(
                         {
                             Ok((t, body)) => {
                                 state.stats.in_flight.fetch_add(1, Ordering::Relaxed);
-                                let base = t.base.clone();
-                                if let Err(rejected) =
-                                    spawn_request(state, RequestFrame { body, ..frame }, base)
-                                {
+                                let frame = RequestFrame { body, ..frame };
+                                let rejected = if t.kind == TargetKind::Foundation {
+                                    spawn_foundation_request(state, frame)
+                                } else {
+                                    let base = t.base.clone();
+                                    spawn_request(state, frame, base)
+                                };
+                                if let Err(rejected) = rejected {
                                     if let Err(e) = send_frame(ws, &rejected) {
                                         return ConnEnd::Dropped(e);
                                     }
@@ -1842,6 +1968,28 @@ fn spawn_request(
     match std::thread::Builder::new()
         .name(format!("relay-req-{}", short_id(&id, 8)))
         .spawn(move || handle_request(&tx, &frame, &target, &cancel))
+    {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            lock_in_flight(&state.in_flight).remove(&id);
+            Err(ClientFrame::Error {
+                id,
+                message: format!("Could not spawn relay worker: {err}"),
+            })
+        }
+    }
+}
+
+/// Spawn a worker thread for one incoming request frame served by the
+/// in-process Apple system model and register its cancel flag.
+fn spawn_foundation_request(state: &ConnState, frame: RequestFrame) -> Result<(), ClientFrame> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let id = frame.id.clone();
+    lock_in_flight(&state.in_flight).insert(id.clone(), Arc::clone(&cancel));
+    let tx = state.tx.clone();
+    match std::thread::Builder::new()
+        .name(format!("relay-req-{}", short_id(&id, 8)))
+        .spawn(move || handle_foundation_request(&tx, &frame, &cancel))
     {
         Ok(_) => Ok(()),
         Err(err) => {
@@ -2192,7 +2340,15 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
     // Find or start the on-device servers before the first discovery, so it
     // sees them. Explicit --target URLs are the user's own servers.
     let supervisor: Option<Arc<Mutex<servers::Supervisor>>> = f.args.target.is_none().then(|| {
-        let specs = f.serve.iter().map(|m| m.spec()).collect();
+        // The in-process Apple system model needs no server process: while it
+        // covers the Apple model, never launch `fm serve` as a child.
+        let in_process = foundation::foundation_model_available();
+        let specs = f
+            .serve
+            .iter()
+            .map(|m| m.spec())
+            .filter(|spec| !(in_process && spec.base == FM_SERVE_TARGET))
+            .collect();
         Arc::new(Mutex::new(servers::Supervisor::start(
             specs,
             f.args.no_launch,
@@ -3038,6 +3194,9 @@ impl doctor::Probe for SystemProbe<'_> {
     }
     fn fm_serve(&self) -> Option<Vec<String>> {
         http_probe_listening(FM_SERVE_HEALTH_URL).then(|| fetch_local_models(FM_SERVE_TARGET))
+    }
+    fn in_process_foundation(&self) -> bool {
+        foundation::foundation_model_available()
     }
     fn decider(&self) -> bool {
         probe_decider(DECIDER_TARGET)
@@ -4723,5 +4882,122 @@ profiles:
         assert!(!is_decider_response(r#"{"error":"not found"}"#));
         assert!(!is_decider_response(r#"{"answers":"x"}"#));
         assert!(!is_decider_response("<html>dev server</html>"));
+    }
+
+    #[test]
+    fn foundation_target_advertises_only_the_pool_join_key() {
+        let r = Router::new(vec![foundation_target()]);
+        // Pool routing joins on the upstream name, never the catalog id.
+        assert_eq!(r.all_models(), vec!["foundation-model"]);
+        assert!(!r.all_models().contains(&"apple/foundation-model".into()));
+    }
+
+    #[test]
+    fn lone_in_process_foundation_takes_chat_requests_and_leaves_decisions() {
+        let r = Router::new(vec![
+            foundation_target(),
+            t(
+                "decider",
+                TargetKind::Decider,
+                &[DECIDER_ADVERTISED_MODEL_ID],
+            ),
+        ]);
+        // The only chat-shaped target: takes chat even unlisted.
+        let got = r
+            .route("/chat/completions", r#"{"model":"anything"}"#)
+            .unwrap();
+        assert_eq!(got.kind, TargetKind::Foundation);
+        let got = r.route("/v1/decisions", r#"{"model":"pplx-decider-flash-v1.2"}"#);
+        assert_eq!(got.unwrap().kind, TargetKind::Decider);
+    }
+
+    #[test]
+    fn foundation_and_chat_match_by_model_when_both_exist() {
+        let r = Router::new(vec![
+            foundation_target(),
+            t("ollama", TargetKind::Chat, &["llama3"]),
+        ]);
+        let got = r.route("/chat/completions", r#"{"model":"foundation-model"}"#);
+        assert_eq!(got.unwrap().kind, TargetKind::Foundation);
+        let got = r.route("/chat/completions", r#"{"model":"llama3"}"#);
+        assert_eq!(got.unwrap().label, "ollama");
+        let err = r
+            .route("/chat/completions", r#"{"model":"nope"}"#)
+            .unwrap_err();
+        assert!(err.contains("available: foundation-model, llama3"), "{err}");
+    }
+
+    #[test]
+    fn keep_selected_drops_the_foundation_target_unselected() {
+        let targets = vec![
+            foundation_target(),
+            t("ollama", TargetKind::Chat, &["llama3"]),
+        ];
+        let none: BTreeSet<OnDeviceModel> = BTreeSet::new();
+        let kept = keep_selected(targets.clone(), &none);
+        assert!(!kept.iter().any(|t| t.kind == TargetKind::Foundation));
+        assert_eq!(kept.len(), 1);
+        let apple_only: BTreeSet<OnDeviceModel> =
+            [OnDeviceModel::AppleFoundation].into_iter().collect();
+        let kept = keep_selected(targets, &apple_only);
+        assert!(kept.iter().any(|t| t.kind == TargetKind::Foundation));
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn foundation_request_with_a_bad_body_does_not_call_the_model() {
+        let (tx, rx) = mpsc::sync_channel(OUTBOUND_QUEUE);
+        handle_foundation_request(
+            &tx,
+            &req("r9", "/chat/completions", "not-json"),
+            &AtomicBool::new(false),
+        );
+        let frames = drain(&rx);
+        match frames.as_slice() {
+            [ClientFrame::Error { id, message }] => {
+                assert_eq!(id, "r9");
+                assert!(message.contains("not JSON"), "{message}");
+            }
+            _ => panic!("expected one error frame, got {} frames", frames.len()),
+        }
+    }
+
+    #[test]
+    fn foundation_request_rejects_a_path_other_than_chat_completions() {
+        let (tx, rx) = mpsc::sync_channel(OUTBOUND_QUEUE);
+        handle_foundation_request(
+            &tx,
+            &req("r10", "/v1/models", "{}"),
+            &AtomicBool::new(false),
+        );
+        let frames = drain(&rx);
+        match frames.as_slice() {
+            [ClientFrame::Error { id, message }] => {
+                assert_eq!(id, "r10");
+                assert!(message.contains("/v1/models"), "{message}");
+            }
+            _ => panic!("expected one error frame, got {} frames", frames.len()),
+        }
+    }
+
+    #[test]
+    fn foundation_cancel_before_start_sends_no_frames() {
+        // Off the Apple driver the failure path still answers a head/chunk/done
+        // triple unless the request is already cancelled.
+        let (tx, rx) = mpsc::sync_channel(OUTBOUND_QUEUE);
+        handle_foundation_request(
+            &tx,
+            &req(
+                "r11",
+                "/chat/completions",
+                r#"{"model":"foundation-model"}"#,
+            ),
+            &AtomicBool::new(true),
+        );
+        let frames = drain(&rx);
+        assert!(
+            frames.is_empty(),
+            "cancelled before start must send no frames: {frames:?}"
+        );
     }
 }

@@ -1,5 +1,98 @@
 fn main() {
     println!("cargo:rustc-env=ANYR_BUILD_TIME_UTC={}", utc_now());
+    println!("cargo:rustc-check-cfg=cfg(anyr_foundation_model)");
+    println!("cargo:rerun-if-changed=src/foundation_relay.swift");
+    compile_foundation_helper();
+}
+
+/// Embed the system-model helper on Apple Silicon only. The dylib is bytes
+/// inside `anyr`, loaded at runtime when the OS can run it. Intel, Windows,
+/// and Linux builds do not compile or advertise it.
+///
+/// A missing toolchain or a helper that will not compile must not fail the
+/// build: warn and build without the helper. The relay then keeps the HTTP
+/// (`fm serve`) path and never mentions the in-process model.
+fn compile_foundation_helper() {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target != "aarch64-apple-darwin" {
+        return;
+    }
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
+    let dylib = std::path::Path::new(&out_dir).join("libanyrfm.dylib");
+    let sdk = match xcrun(&["--sdk", "macosx", "--show-sdk-path"]) {
+        Ok(sdk) => sdk,
+        Err(err) => {
+            println!("cargo:warning=building without the system model helper: {err}");
+            return;
+        }
+    };
+    if sdk.is_empty() {
+        println!("cargo:warning=building without the system model helper: macOS SDK path is empty");
+        return;
+    }
+    let mut cmd = std::process::Command::new("swiftc");
+    cmd.args([
+        "-emit-library",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-module-name",
+        "AnyrFm",
+        "-target",
+        "arm64-apple-macosx26.0",
+        "-sdk",
+        sdk.trim(),
+        "-o",
+    ])
+    .arg(&dylib)
+    .arg("src/foundation_relay.swift")
+    .args([
+        "-framework",
+        "Foundation",
+        "-Xlinker",
+        "-weak_framework",
+        "-Xlinker",
+        "FoundationModels",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "/usr/lib/swift",
+    ]);
+    if std::env::var("PROFILE").ok().as_deref() == Some("release") {
+        cmd.arg("-O");
+    }
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(err) => {
+            println!(
+                "cargo:warning=building without the system model helper: could not run swiftc: {err}"
+            );
+            return;
+        }
+    };
+    if !output.status.success() {
+        println!(
+            "cargo:warning=building without the system model helper: swiftc failed\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    println!("cargo:rustc-cfg=anyr_foundation_model");
+}
+
+fn xcrun(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("xcrun")
+        .args(args)
+        .output()
+        .map_err(|err| format!("could not run xcrun: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "xcrun {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Build time as `YYYY-MM-DDTHH:MM:SSZ` (UTC), std-only — civil-from-days per
