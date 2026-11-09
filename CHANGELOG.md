@@ -10,6 +10,14 @@ GitHub Releases use this file as the release notes (full history through that ta
 
 * **cli:** add `anyr decision` for typed `POST /api/v1/decisions` requests with flag or stdin JSON input. Known Decisions models are refused by chat-agent launchers. ([duyet/anyrouter#3550](https://github.com/duyet/anyrouter/issues/3550))
 
+## [0.1.43](https://github.com/AnyRouterHQ/cli/compare/v0.1.42...v0.1.43) (2026-11-09)
+
+
+### Bug Fixes
+
+* **opencode:** pass --model through to OpenCode run ([7f298ef](https://github.com/AnyRouterHQ/cli/commit/7f298efc21461ac79b40772a54db32c9cc478ddb))
+* **update:** try unauthenticated GitHub REST API before HTML scraping ([3306f95](https://github.com/AnyRouterHQ/cli/commit/3306f956d8f95ec4aaa3a7a3998b4df7d059df7d))
+
 ## [0.1.42](https://github.com/AnyRouterHQ/cli/compare/v0.1.41...v0.1.42) (2026-11-09)
 
 
