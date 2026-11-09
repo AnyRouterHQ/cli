@@ -392,6 +392,9 @@ anyr relay status [--json]                  # running?, connection, models, requ
 anyr relay logs --follow                    # background log
 anyr relay stop                             # graceful stop (same as Ctrl-C)
 anyr relay models [--json]                  # local models and which are served
+anyr relay models enable|disable <id>       # choose which models are exposed (saved)
+anyr relay models auto on|off               # re-check local servers every 15s (saved)
+anyr relay models allow-all                 # expose every detected local model again
 anyr relay models disable apple/foundation-model
 anyr relay devices [--json]                 # your paired devices: state, models, last seen, pool
 anyr relay devices rename <id> "Studio Mac"
@@ -413,11 +416,21 @@ The relay detects the on-device models this Mac can serve:
   list the detected Ollama tags. Ollama has to be serving already (`ollama serve`
   or the app); the relay does not start it for you.
 
+While the relay is running it re-checks the local servers every 15 seconds. A
+model pulled or removed after start (`ollama pull llama3.2:1b`) is picked up and
+re-advertised over the existing connection, so the cloud and the pool see it
+without a relay restart. `anyr relay models auto off` switches this off (the list
+then stays what it was at connect time); `anyr relay models auto` shows the
+current setting. The whitelist for local models is managed with
+`anyr relay models enable|disable <id>` and cleared with
+`anyr relay models allow-all`; it only controls what the relay advertises — a
+listed model is always served, and the whitelist never blocks local routing.
+
 The first `start` at a terminal opens a checklist (space toggles, enter
 starts) and saves the answer; change it later with `anyr relay models
 enable|disable <id>`. `--model <id>` (repeatable) and `--all` override the saved
 choice for one run. Other local servers (Ollama, LM Studio, `--target <url>`)
-are always served.
+are advertised unless you whitelist a subset with `relay models enable|disable`.
 
 You don't need a second terminal. When a chosen model's server is installed
 but not running, `start` launches it: `fm serve` as a child process, or the

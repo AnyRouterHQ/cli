@@ -657,7 +657,9 @@ Usage:
   {bin} relay status [--json]     running?, connection, models, requests, tokens, pool
   {bin} relay logs [--follow] [--lines N]   log of the background relay
   {bin} relay models [--json]     local models and which ones are served
-  {bin} relay models enable|disable <id>    choose on-device models (saved)
+  {bin} relay models enable|disable <id>   choose exposed models (saved)
+  {bin} relay models allow-all    expose every detected local model again
+  {bin} relay models auto [on|off]  re-check local servers every 15s (default on)
   {bin} relay models --devices [--json]     per model: devices, online, pool (all your devices)
   {bin} relay devices [--json]    your paired devices: id, name, state, models, last seen, pool
   {bin} relay devices rename <id> <name>    rename a device
@@ -677,6 +679,14 @@ The first start at a terminal asks which to serve and saves the answer.
 Start launches a chosen server that is installed but not running (`fm serve`,
 or `open -g -a Decider`) and stops it when the relay exits. A server you
 started yourself is used as is and left running.
+
+While the relay runs it re-checks the local servers every 15s and re-advertises
+models that were pulled or removed, without dropping the connection — so an
+`ollama pull`ed model becomes servable without a restart. `relay models auto off`
+freezes the list from connect time. The enable|disable whitelist only controls
+what the relay advertises (what the cloud and the pool know); a locally served
+model is not blocked by it. Join keys (Apple system model) stay advertised while
+fm serve is served.
 
 Start options:
   --detach               run in the background (log: `{bin} relay logs`)
