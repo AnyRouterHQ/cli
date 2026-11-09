@@ -137,6 +137,19 @@ pub fn http_get_github(url: &str, token: &str) -> Result<(u16, String), String> 
     into_status_body_labeled(req.call(), "GitHub Releases")
 }
 
+/// Unauthenticated GitHub REST GET for public repos. Works from home
+/// networks (60 req/hour); shared IPs (CI) may get 403 and should use
+/// `http_get_github` with a token instead.
+#[cfg(feature = "native")]
+pub fn http_get_github_unauth(url: &str) -> Result<(u16, String), String> {
+    let req = agent()
+        .get(url)
+        .set("Accept", "application/vnd.github+json")
+        .set("X-GitHub-Api-Version", "2022-11-28")
+        .set("User-Agent", &format!("anyr-cli/{VERSION}"));
+    into_status_body_labeled(req.call(), "GitHub Releases")
+}
+
 /// `github.com` HTML (releases listing / expanded_assets). Not the REST API.
 #[cfg(feature = "native")]
 pub fn http_get_web(url: &str) -> Result<(u16, String), String> {

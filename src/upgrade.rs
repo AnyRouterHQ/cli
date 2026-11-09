@@ -19,7 +19,7 @@ use crate::channel::{
     GITHUB_EXPANDED_ASSETS_PREFIX, GITHUB_RELEASES_API, GITHUB_RELEASES_HTML,
 };
 use crate::config::{resolve_config_path, write_config};
-use crate::http::{http_get_github, http_get_web};
+use crate::http::{http_get_github, http_get_github_unauth, http_get_web};
 use crate::key::load_config_if_present;
 use crate::parse::{get_string_flag, ParsedArgs};
 use crate::spawn::redact_value;
@@ -100,22 +100,46 @@ fn fetch_releases(
     env: &BTreeMap<String, String>,
     deadline: Option<Instant>,
 ) -> Result<Vec<Release>, String> {
-    let mut api_err = None;
+    let mut errors: Vec<String> = Vec::new();
+    // 1. Authenticated REST API (when a token is configured — CI, etc.)
     if let Some(token) = github_token(env) {
         match fetch_releases_api(token) {
             Ok(rels) => return Ok(rels),
-            Err(err) => api_err = Some(err),
+            Err(err) => errors.push(format!("GitHub REST API (with token): {err}")),
         }
     }
+    // 2. Unauthenticated REST API — works for public repos from home networks
+    //    (60 req/hour). More reliable than HTML scraping, which GitHub blocks
+    //    for anonymous requests (returns a page without release tags).
+    match fetch_releases_api_no_token() {
+        Ok(rels) => return Ok(rels),
+        Err(err) => errors.push(format!("GitHub REST API (unauthenticated): {err}")),
+    }
+    // 3. Last resort: scrape github.com/.../releases HTML.
     match fetch_releases_html(deadline) {
         Ok(rels) => Ok(rels),
-        Err(html_err) => Err(match api_err {
-            Some(api) => format!(
-                "{api} Fell back to github.com/releases (not the REST API), which also failed: {html_err}"
-            ),
-            None => html_err,
-        }),
+        Err(html_err) => {
+            let mut msg = errors.join("; ");
+            if !msg.is_empty() {
+                msg += "; ";
+            }
+            msg += &format!(
+                "Fell back to github.com/releases (not the REST API), which also failed: {html_err}"
+            );
+            Err(msg)
+        }
     }
+}
+
+/// GitHub REST API for a public repo without a token. Works from home
+/// networks (unauthenticated quota: 60 req/hour). Only shared IPs (CI runners)
+/// get 403 here; those keep the authenticated path above.
+fn fetch_releases_api_no_token() -> Result<Vec<Release>, String> {
+    let (status, body) = http_get_github_unauth(GITHUB_RELEASES_API)?;
+    if !(200..300).contains(&status) {
+        return Err(releases_http_error(status, &body));
+    }
+    parse_releases(&body)
 }
 
 fn fetch_releases_api(token: &str) -> Result<Vec<Release>, String> {
