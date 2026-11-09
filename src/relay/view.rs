@@ -253,10 +253,8 @@ pub(super) struct ModelRow {
     pub source: String,
     /// None = ready; Some(why) = not reachable now.
     pub unavailable: Option<String>,
-    /// Saved choice says serve it. Always true for non-on-device servers.
+    /// Saved choice says serve it.
     pub enabled: bool,
-    /// Only on-device models can be toggled.
-    pub toggleable: bool,
 }
 
 pub(super) fn render_models(rows: &[ModelRow], p: Paint) -> String {
@@ -269,16 +267,10 @@ pub(super) fn render_models(rows: &[ModelRow], p: Paint) -> String {
             None => p.ok("ready"),
             Some(why) => p.warn(why),
         };
-        let note = if r.toggleable {
-            ""
-        } else {
-            "  (always served)"
-        };
         out += &format!(
-            "  {mark} {:<w$}  {}  {state}{}\n",
+            "  {mark} {:<w$}  {}  {state}\n",
             r.id,
             p.dim(&format!("{:<sw$}", r.source)),
-            p.dim(note),
         );
     }
     out
@@ -431,19 +423,17 @@ AnyRouter relay  ■ not running
                 source: "Apple Foundation Models".into(),
                 unavailable: Some("run `fm serve`".into()),
                 enabled: true,
-                toggleable: true,
             },
             ModelRow {
                 id: "llama3".into(),
                 source: "Ollama".into(),
                 unavailable: None,
                 enabled: true,
-                toggleable: false,
             },
         ];
         assert_eq!(
             render_models(&rows, NO),
-            "  ✓ apple/foundation-model  Apple Foundation Models  run `fm serve`\n  ✓ llama3                  Ollama                   ready  (always served)\n"
+            "  ✓ apple/foundation-model  Apple Foundation Models  run `fm serve`\n  ✓ llama3                  Ollama                   ready\n"
         );
     }
 

@@ -2233,7 +2233,8 @@ fn relay_usage_errors_exit_2_with_the_fix() {
     let home = temp_home();
     for (args, needle) in [
         (&["unpair"][..], "--yes"),
-        (&["models", "enable", "gpt-5"], "Unknown on-device model"),
+        (&["models", "enable"], "needs a model id"),
+        (&["models", "auto", "maybe"], "on or off"),
         (&["pool", "maybe"], "on or off"),
         (&["start", "--model", "gpt-5"], "relay models"),
         (&["start", "--pool", "--no-pool"], "not both"),
@@ -2242,6 +2243,52 @@ fn relay_usage_errors_exit_2_with_the_fix() {
         assert_eq!(code, 2, "{args:?}: {stderr}");
         assert!(stderr.contains(needle), "{args:?}: {stderr}");
     }
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn relay_models_auto_round_trips_the_saved_pref() {
+    let home = temp_home();
+    let (code, stdout, _) = relay_in(&home, &["models", "auto"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("Auto-detect: on"), "{stdout}");
+    let (code, stdout, _) = relay_in(&home, &["models", "auto", "off"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("Auto-detect off (saved)."), "{stdout}");
+    let prefs = std::fs::read_to_string(home.join("relay/prefs.json")).unwrap();
+    assert!(prefs.contains(r#""auto_detect":false"#), "{prefs}");
+    let (code, stdout, _) = relay_in(&home, &["models", "auto"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("Auto-detect: off"), "{stdout}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn relay_models_allow_all_clears_the_whitelist() {
+    let home = temp_home();
+    // Seed a whitelist through the file the CLI writes.
+    std::fs::create_dir_all(home.join("relay")).unwrap();
+    std::fs::write(
+        home.join("relay/prefs.json"),
+        r#"{"local_models":["mistral:latest"]}"#,
+    )
+    .unwrap();
+    let (code, stdout, _) = relay_in(&home, &["models", "allow-all"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("every detected local model"), "{stdout}");
+    let prefs = std::fs::read_to_string(home.join("relay/prefs.json")).unwrap();
+    assert!(!prefs.contains("local_models"), "{prefs}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn relay_models_enable_with_no_whitelist_is_a_noop() {
+    let home = temp_home();
+    let (code, stdout, _) = relay_in(&home, &["models", "enable", "llama3.2:latest"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("already exposed"), "{stdout}");
+    let prefs = home.join("relay/prefs.json");
+    assert!(!prefs.exists(), "no whitelist should be saved");
     let _ = std::fs::remove_dir_all(&home);
 }
 

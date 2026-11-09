@@ -57,15 +57,22 @@ pub(super) fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Prefs: what `relay pool` and `relay models` saved.
+// Prefs: what `relay pool` and `relay models` saved — the pool opt-in, the
+// on-device model choice, the runtime local-model watch (`auto_detect`) and
+// the local-server exposure whitelist (`local_models`).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Prefs {
+    /// None = never set (default on): re-poll local servers while connected.
+    pub auto_detect: Option<bool>,
     /// None = never set (default on).
     pub pool: Option<bool>,
     /// Catalog ids of on-device models to serve. None = never chosen.
     pub models: Option<Vec<String>>,
+    /// None = expose every detected local server model (current behavior).
+    /// Some(list) = expose only these raw local ids (e.g. "qwen2.5-coder:32b").
+    pub local_models: Option<Vec<String>>,
 }
 
 impl Prefs {
@@ -77,14 +84,26 @@ impl Prefs {
         if let Some(m) = &self.models {
             v["models"] = json!(m);
         }
+        if let Some(a) = &self.auto_detect {
+            v["auto_detect"] = json!(a);
+        }
+        if let Some(l) = &self.local_models {
+            v["local_models"] = json!(l);
+        }
         v.to_string()
     }
 
     pub fn from_json(raw: &str) -> Prefs {
         let v: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
         Prefs {
+            auto_detect: v.get("auto_detect").and_then(Value::as_bool),
             pool: v.get("pool").and_then(Value::as_bool),
             models: v.get("models").and_then(Value::as_array).map(|a| {
+                a.iter()
+                    .filter_map(|m| m.as_str().map(str::to_string))
+                    .collect()
+            }),
+            local_models: v.get("local_models").and_then(Value::as_array).map(|a| {
                 a.iter()
                     .filter_map(|m| m.as_str().map(str::to_string))
                     .collect()
@@ -129,6 +148,11 @@ pub(super) fn effective_pool(flag: Option<bool>, prefs: &Prefs) -> (bool, PoolSo
         (None, Some(v)) => (v, PoolSource::Saved),
         (None, None) => (true, PoolSource::Default),
     }
+}
+
+/// None = never set (default on): re-poll local servers while connected.
+pub(super) fn effective_auto_detect(prefs: &Prefs) -> bool {
+    prefs.auto_detect.unwrap_or(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +430,7 @@ mod tests {
         let off = Prefs {
             pool: Some(false),
             models: None,
+            ..Default::default()
         };
         // WHY: a user who ran `relay pool off` must not start donating again
         // because a later `relay start` omitted --no-pool.
@@ -426,6 +451,7 @@ mod tests {
         let prefs = Prefs {
             pool: Some(false),
             models: Some(vec!["apple/foundation-model".into()]),
+            ..Default::default()
         };
         assert_eq!(Prefs::from_json(&prefs.to_json()), prefs);
         assert_eq!(Prefs::from_json("garbage"), Prefs::default());
@@ -438,6 +464,42 @@ mod tests {
         };
         s.tokens = None;
         assert_eq!(Snapshot::from_value(&s.to_value()), Some(s));
+    }
+
+    #[test]
+    fn auto_detect_and_local_models_round_trip() {
+        // Test auto_detect default-on (None -> true)
+        let prefs = Prefs {
+            auto_detect: None,
+            local_models: None,
+            ..Default::default()
+        };
+        assert_eq!(Prefs::from_json(&prefs.to_json()), prefs);
+
+        // Test auto_detect explicitly off
+        let prefs_off = Prefs {
+            auto_detect: Some(false),
+            local_models: Some(vec!["qwen2.5-coder:32b".into()]),
+            ..Default::default()
+        };
+        assert_eq!(Prefs::from_json(&prefs_off.to_json()), prefs_off);
+
+        // Test effective_auto_detect
+        assert!(effective_auto_detect(&Prefs::default()), "default on");
+        assert!(
+            !effective_auto_detect(&Prefs {
+                auto_detect: Some(false),
+                ..Default::default()
+            }),
+            "explicit off"
+        );
+        assert!(
+            effective_auto_detect(&Prefs {
+                auto_detect: Some(true),
+                ..Default::default()
+            }),
+            "explicit on"
+        );
     }
 
     #[test]

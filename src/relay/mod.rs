@@ -73,6 +73,10 @@ const SOCKET_POLL_MS: u64 = 250;
 /// Read wait while the outbound queue still holds frames: just long enough
 /// to collect what the cloud already sent.
 const BUSY_POLL: Duration = Duration::from_millis(1);
+/// How often the running relay re-checks local servers for model changes, so
+/// a model pulled (or removed) while the relay runs is picked up without a
+/// restart. Each check is one GET per chat endpoint on loopback.
+const MODEL_WATCH_EVERY: Duration = Duration::from_secs(15);
 /// Frames workers may queue ahead of the socket. A peer that stops reading
 /// then stalls the local read instead of growing memory: at most this many
 /// chunks of up to 8 KiB each.
@@ -700,13 +704,13 @@ fn probe_decider(base: &str) -> bool {
     }
 }
 
-fn chat_target(label: &str, base: &str) -> Target {
+fn chat_target(label: &str, base: &str, whitelist: Option<&[String]>) -> Target {
     let fetched = fetch_local_models(base);
     Target {
         label: label.to_string(),
         base: base.to_string(),
         kind: TargetKind::Chat,
-        models: advertised_models(base, &fetched),
+        models: advertised_models(base, &filter_whitelist(fetched.clone(), whitelist)),
         fm_models: is_fm_serve_target(base).then_some(fetched),
     }
 }
@@ -750,7 +754,7 @@ fn on_device_listening(spec: &servers::ServerSpec) -> bool {
 }
 
 /// Probe every known local endpoint (all of them, not first-wins).
-fn discover_targets() -> Vec<Target> {
+fn discover_targets(prefs: &state::Prefs) -> Vec<Target> {
     let mut out = Vec::new();
     // The in-process Apple system model comes first: when it is available it
     // owns the pool join key (`foundation-model`), and the HTTP `fm serve`
@@ -766,7 +770,9 @@ fn discover_targets() -> Vec<Target> {
         }
         if on_device_listening(spec) {
             out.push(match spec.kind {
-                TargetKind::Chat => chat_target(spec.endpoint, spec.base),
+                TargetKind::Chat => {
+                    chat_target(spec.endpoint, spec.base, prefs.local_models.as_deref())
+                }
                 TargetKind::Decider => decider_target(spec.base),
                 TargetKind::Foundation => foundation_target(),
             });
@@ -774,7 +780,7 @@ fn discover_targets() -> Vec<Target> {
     }
     for (label, base, health) in CHAT_PROBES {
         if http_probe_listening(health) {
-            out.push(chat_target(label, base));
+            out.push(chat_target(label, base, prefs.local_models.as_deref()));
         }
     }
     out
@@ -1033,7 +1039,11 @@ fn keep_selected(targets: Vec<Target>, serve: &BTreeSet<OnDeviceModel>) -> Vec<T
 /// Build the router: explicit `--target` URLs (comma-separated; repeated
 /// flags are joined by the parser) override discovery. With nothing found,
 /// fall back to the historical default so the relay still starts.
-fn build_router(explicit: Option<&str>, serve: &BTreeSet<OnDeviceModel>) -> Router {
+fn build_router(
+    explicit: Option<&str>,
+    serve: &BTreeSet<OnDeviceModel>,
+    prefs: &state::Prefs,
+) -> Router {
     let urls: Vec<&str> = explicit
         .map(|s| {
             s.split(',')
@@ -1043,7 +1053,7 @@ fn build_router(explicit: Option<&str>, serve: &BTreeSet<OnDeviceModel>) -> Rout
         })
         .unwrap_or_default();
     let mut targets = if urls.is_empty() {
-        keep_selected(discover_targets(), serve)
+        keep_selected(discover_targets(prefs), serve)
     } else {
         urls.iter()
             .map(|u| {
@@ -1057,7 +1067,10 @@ fn build_router(explicit: Option<&str>, serve: &BTreeSet<OnDeviceModel>) -> Rout
                         label: "--target".to_string(),
                         base: u.to_string(),
                         kind: TargetKind::Chat,
-                        models: advertised_models(u, &fetched),
+                        models: advertised_models(
+                            u,
+                            &filter_whitelist(fetched.clone(), prefs.local_models.as_deref()),
+                        ),
                         fm_models: is_fm_serve_target(u).then(|| fetched.clone()),
                     }
                 }
@@ -1065,7 +1078,11 @@ fn build_router(explicit: Option<&str>, serve: &BTreeSet<OnDeviceModel>) -> Rout
             .collect()
     };
     if targets.is_empty() {
-        targets.push(chat_target(FALLBACK_LABEL, DEFAULT_TARGET));
+        targets.push(chat_target(
+            FALLBACK_LABEL,
+            DEFAULT_TARGET,
+            prefs.local_models.as_deref(),
+        ));
     }
     Router::new(targets)
 }
@@ -1090,37 +1107,41 @@ fn is_fm_serve_target(target: &str) -> bool {
     target.contains("127.0.0.1:1976") || target.contains("localhost:1976")
 }
 
+/// Fetch the local target's OpenAI-compatible /models list. Err on
+/// transport/HTTP failure so the watch can keep its last-known list instead
+/// of advertising an empty one after a hiccup; Ok(empty) is a real answer.
+fn try_fetch_local_models(target: &str) -> Result<Vec<String>, String> {
+    let url = format!("{}/models", target.trim_end_matches('/'));
+    let resp = ureq::get(&url)
+        .timeout(Duration::from_secs(5))
+        .call()
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+    if !(200..300).contains(&resp.status()) {
+        return Err(format!("could not reach {url}: status {}", resp.status()));
+    }
+    let body = resp.into_string().unwrap_or_default();
+    Ok(serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| {
+            v.get("data").and_then(|d| d.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
+                    .map(str::to_string)
+                    .collect()
+            })
+        })
+        .unwrap_or_default())
+}
+
 /// Fetch the local target's OpenAI-compatible /models list. Empty vec when
 /// unreachable — connect without advertising rather than failing: a device
 /// with no advertised models simply never becomes a pool donor.
 fn fetch_local_models(target: &str) -> Vec<String> {
-    let url = format!("{}/models", target.trim_end_matches('/'));
-    let result = ureq::get(&url).timeout(Duration::from_secs(5)).call();
-    match result {
-        Ok(resp) if (200..300).contains(&resp.status()) => {
-            let body = resp.into_string().unwrap_or_default();
-            serde_json::from_str::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|v| {
-                    v.get("data").and_then(|d| d.as_array()).map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
-                            .map(str::to_string)
-                            .collect()
-                    })
-                })
-                .unwrap_or_default()
-        }
-        Ok(resp) => {
-            vlog(&format!(
-                "could not reach {url} (status {}) — connecting without capability advertisement",
-                resp.status()
-            ));
-            Vec::new()
-        }
+    match try_fetch_local_models(target) {
+        Ok(models) => models,
         Err(err) => {
             vlog(&format!(
-                "could not reach {url} ({err}) — connecting without capability advertisement"
+                "{err} — connecting without capability advertisement"
             ));
             Vec::new()
         }
@@ -1135,6 +1156,77 @@ fn advertised_models(target: &str, fetched: &[String]) -> Vec<String> {
         models.push(FM_SERVE_ADVERTISED_MODEL_ID.to_string());
     }
     models
+}
+
+/// wl None -> every id passes; Some(wl) -> only whitelisted ids pass.
+fn filter_whitelist(ids: Vec<String>, wl: Option<&[String]>) -> Vec<String> {
+    match wl {
+        None => ids,
+        Some(wl) => ids.into_iter().filter(|id| wl.contains(id)).collect(),
+    }
+}
+
+/// Result of one watch pass over the current targets.
+struct WatchOutcome {
+    targets: Vec<Target>,
+    added: Vec<String>,
+    removed: Vec<String>,
+}
+
+/// Re-derive model lists from fresh `/models` probes. `fetched[i]` is the
+/// probe result for `targets[i]`; None = probe failed, keep that target's
+/// last-known list (a hiccup must not un-advertise everything). Returns None
+/// when no advertised list changed. Non-Chat targets (Foundation, Decider)
+/// pass through untouched. Whitelist filtering happens before the fm serve
+/// join-key correction, and `fm_models` keeps the raw ids (map_fm_model needs
+/// them), so a filtered-out id still routes.
+fn watch_refresh(
+    targets: &[Target],
+    fetched: Vec<Option<Vec<String>>>,
+    whitelist: Option<&[String]>,
+) -> Option<WatchOutcome> {
+    let mut fresh = Vec::with_capacity(targets.len());
+    let mut changed = false;
+    for (target, probe) in targets.iter().zip(fetched) {
+        if target.kind != TargetKind::Chat {
+            fresh.push(target.clone());
+            continue;
+        }
+        let Some(raw) = probe else {
+            fresh.push(target.clone());
+            continue;
+        };
+        let models = advertised_models(&target.base, &filter_whitelist(raw.clone(), whitelist));
+        let fm_models = is_fm_serve_target(&target.base).then_some(raw);
+        if models != target.models || fm_models != target.fm_models {
+            changed = true;
+        }
+        fresh.push(Target {
+            label: target.label.clone(),
+            base: target.base.clone(),
+            kind: target.kind,
+            models,
+            fm_models,
+        });
+    }
+    if !changed {
+        return None;
+    }
+    let old: std::collections::BTreeSet<&String> =
+        targets.iter().flat_map(|t| t.models.iter()).collect();
+    let (added, removed): (Vec<String>, Vec<String>) = {
+        let new: std::collections::BTreeSet<&String> =
+            fresh.iter().flat_map(|t| t.models.iter()).collect();
+        (
+            new.difference(&old).map(|s| s.to_string()).collect(),
+            old.difference(&new).map(|s| s.to_string()).collect(),
+        )
+    };
+    Some(WatchOutcome {
+        targets: fresh,
+        added,
+        removed,
+    })
 }
 
 /// fm serve's own id for Apple's on-device model. The cloud sends the
@@ -1716,28 +1808,44 @@ enum ConnEnd {
     Rescan,
 }
 
+/// Pool value for the hello frame: only sent when the user chose (a pool
+/// chosen on the command line beats an unchosen silent default).
+fn chosen_pool(state: &ConnState) -> Option<bool> {
+    state
+        .pool_chosen
+        .load(Ordering::Relaxed)
+        .then(|| state.stats.pool.load(Ordering::Relaxed))
+}
+
+fn hello_frame(
+    models: Vec<String>,
+    max_concurrency: Option<u32>,
+    pool: Option<bool>,
+) -> ClientFrame {
+    ClientFrame::Hello {
+        models,
+        max_concurrency,
+        pool,
+    }
+}
+
 /// One full connection lifecycle: handshake → hello → serve frames until the
 /// socket dies or a stop/rescan is requested.
 fn serve_connection(
     ws: &mut Ws,
-    router: &Router,
+    router: &mut Router,
     state: &ConnState,
     max_concurrency: Option<u32>,
     on_device: &dyn Fn(&str),
+    tags: &BTreeMap<&str, &str>,
+    watch: Option<(Duration, state::Paths)>,
 ) -> ConnEnd {
     vlog("connected");
 
     // Capability advertisement on every connect/reconnect (#1128), so models
     // added to the local server show up at the next reconnect at latest.
     let models = router.all_models();
-    let hello = ClientFrame::Hello {
-        models: models.clone(),
-        max_concurrency,
-        pool: state
-            .pool_chosen
-            .load(Ordering::Relaxed)
-            .then(|| state.stats.pool.load(Ordering::Relaxed)),
-    };
+    let hello = hello_frame(models.clone(), max_concurrency, chosen_pool(state));
     if let Err(e) = send_frame(ws, &hello) {
         return ConnEnd::Dropped(e);
     }
@@ -1769,6 +1877,7 @@ fn serve_connection(
     let mut tokens: BTreeMap<String, u64> = BTreeMap::new();
     let mut last_heard = std::time::Instant::now();
     let mut last_ping = last_heard;
+    let mut last_watch = last_heard;
     let mut busy = false;
     loop {
         if last_heard.elapsed() >= state.timing.dead_after {
@@ -1786,6 +1895,52 @@ fn serve_connection(
             let _ = ws.close(None);
             let _ = ws.flush();
             return ConnEnd::Rescan;
+        }
+        // Watch local model lists: a model pulled (or removed) while the relay
+        // runs is re-advertised in place, without dropping the connection.
+        // A probe hiccup keeps the last-known list; only a real answer from
+        // every chat endpoint can change what the cloud sees.
+        if let Some((interval, paths)) = watch.as_ref() {
+            if last_watch.elapsed() >= *interval {
+                last_watch = std::time::Instant::now();
+                let prefs = state::load_prefs(paths);
+                if state::effective_auto_detect(&prefs) {
+                    let fetched: Vec<Option<Vec<String>>> = router
+                        .targets
+                        .iter()
+                        .map(|t| {
+                            if t.kind == TargetKind::Chat {
+                                try_fetch_local_models(&t.base).ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if let Some(outcome) =
+                        watch_refresh(&router.targets, fetched, prefs.local_models.as_deref())
+                    {
+                        let new_router = Router::new(outcome.targets);
+                        let hello = hello_frame(
+                            new_router.all_models(),
+                            max_concurrency,
+                            chosen_pool(state),
+                        );
+                        if let Err(e) = send_frame(ws, &hello) {
+                            return ConnEnd::Dropped(e);
+                        }
+                        state
+                            .stats
+                            .set_router(new_router.all_models(), endpoint_rows(&new_router, tags));
+                        *router = new_router;
+                        ulog(&format!(
+                            "local models changed (+{}; -{}) — re-advertised {} model(s)",
+                            outcome.added.join(", "),
+                            outcome.removed.join(", "),
+                            router.all_models().len(),
+                        ));
+                    }
+                }
+            }
         }
         // 1. Drain worker output first so streamed chunks go out promptly.
         //    A queue that never empties (a long stream to a slow cloud)
@@ -2082,8 +2237,9 @@ fn refresh_router(
     stats: &Stats,
     last_sig: &mut String,
     tags: &BTreeMap<&str, &str>,
+    prefs: &state::Prefs,
 ) -> Router {
-    let router = build_router(explicit, serve);
+    let router = build_router(explicit, serve, prefs);
     let endpoints = endpoint_rows(&router, tags);
     let sig = format!("{endpoints:?}{:?}", router.all_models());
     if sig != *last_sig {
@@ -2384,12 +2540,14 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
     });
 
     let mut last_sig = String::new();
+    let prefs = state::load_prefs(&f.paths);
     let mut router = refresh_router(
         f.args.target.as_deref(),
         f.serve,
         &stats,
         &mut last_sig,
         &tags(),
+        &prefs,
     );
     if !live_screen && !f.quiet {
         print_start_summary(&router, f.pool, f.detached, f.env);
@@ -2498,8 +2656,16 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
                     ..ConnState::new(Arc::clone(&stats))
                 };
                 let up_since = std::time::Instant::now();
-                let end =
-                    serve_connection(&mut ws, &router, &conn, f.args.max_concurrency, &on_device);
+                let watch = Some((MODEL_WATCH_EVERY, state::paths(f.env)));
+                let end = serve_connection(
+                    &mut ws,
+                    &mut router,
+                    &conn,
+                    f.args.max_concurrency,
+                    &on_device,
+                    &tags(),
+                    watch,
+                );
                 orphans = conn.orphans.take();
                 orphans.extend(abort_in_flight(&conn.in_flight));
                 drop(conn);
@@ -2511,12 +2677,14 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
                     ConnEnd::Stop => break,
                     ConnEnd::Rescan => {
                         stats.set_conn(Conn::Connecting);
+                        let prefs = state::load_prefs(&f.paths);
                         router = refresh_router(
                             f.args.target.as_deref(),
                             f.serve,
                             &stats,
                             &mut last_sig,
                             &tags(),
+                            &prefs,
                         );
                         continue;
                     }
@@ -2558,12 +2726,14 @@ fn run_foreground(f: Foreground<'_>) -> Result<i32, String> {
         // Re-discover before every reconnect so endpoints started or stopped
         // since the last connect are picked up, and so no socket sits open
         // and unread while probes run.
+        let prefs = state::load_prefs(&f.paths);
         router = refresh_router(
             f.args.target.as_deref(),
             f.serve,
             &stats,
             &mut last_sig,
             &tags(),
+            &prefs,
         );
     }
 
@@ -2955,7 +3125,6 @@ fn model_rows(prefs: &state::Prefs) -> Vec<view::ModelRow> {
                 m.iter()
                     .any(|id| OnDeviceModel::from_id(id) == Some(d.model))
             }),
-            toggleable: true,
         })
         .collect();
     for (label, base, health) in CHAT_PROBES.iter() {
@@ -2964,11 +3133,13 @@ fn model_rows(prefs: &state::Prefs) -> Vec<view::ModelRow> {
         }
         for id in fetch_local_models(base) {
             rows.push(view::ModelRow {
+                enabled: prefs
+                    .local_models
+                    .as_ref()
+                    .is_none_or(|wl| wl.iter().any(|x| x == &id)),
                 id,
                 source: label.to_string(),
                 unavailable: None,
-                enabled: true,
-                toggleable: false,
             });
         }
     }
@@ -2979,6 +3150,7 @@ fn run_relay_models(env: &BTreeMap<String, String>, json_out: bool) -> Result<i3
     let bin = crate::help::invoked_bin();
     let prefs = state::load_prefs(&state::paths(env));
     let rows = model_rows(&prefs);
+    let auto = state::effective_auto_detect(&prefs);
     if json_out {
         let v = json!({
             "models": rows.iter().map(|r| json!({
@@ -2987,21 +3159,197 @@ fn run_relay_models(env: &BTreeMap<String, String>, json_out: bool) -> Result<i3
                 "available": r.unavailable.is_none(),
                 "reason": r.unavailable,
                 "enabled": r.enabled,
-                "toggleable": r.toggleable,
             })).collect::<Vec<_>>(),
+            "auto_detect": auto,
+            "local_models": prefs.local_models,
         });
         println!("{v:#}");
         return Ok(0);
     }
     let p = Paint(crate::term::color_enabled());
+    println!(
+        "Auto-detect new local models: {}",
+        if auto { p.ok("on") } else { p.dim("off") }
+    );
     print!("{}", view::render_models(&rows, p));
     print!(
         "{}",
         view::render_next(
-            &format!("`{bin} relay models disable <id>` or `{bin} relay models enable <id>`"),
+            &format!(
+                "`{bin} relay models enable|disable <id>` · expose all: `{bin} relay models allow-all` · auto-detect: `{bin} relay models auto on|off`"
+            ),
             p
         )
     );
+    Ok(0)
+}
+
+/// Detected local server model ids (deduped), across every chat probe.
+fn detected_local_models() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, base, health) in CHAT_PROBES.iter() {
+        if !http_probe_listening(health) {
+            continue;
+        }
+        for id in fetch_local_models(base) {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+    }
+    out
+}
+
+/// Whitelist membership toggle. `current` is the saved whitelist (None =
+/// everything detected is exposed). `detected` backs materializing the list
+/// when disabling from the all-exposed state. Ok(None) = nothing to save.
+fn whitelist_toggle(
+    current: Option<Vec<String>>,
+    detected: &[String],
+    id: &str,
+    enable: bool,
+) -> Result<Option<Vec<String>>, String> {
+    match (enable, current) {
+        // Already exposes everything: nothing to widen.
+        (true, None) => Ok(None),
+        (true, Some(mut wl)) => {
+            if wl.iter().any(|x| x == id) {
+                return Ok(Some(wl));
+            }
+            wl.push(id.to_string());
+            wl.sort();
+            wl.dedup();
+            Ok(Some(wl))
+        }
+        // Leaving the all-exposed state: materialize detected minus `id`.
+        (false, None) => {
+            if detected.is_empty() {
+                return Err(
+                    "No local server answered — can't base the whitelist on detection; check that Ollama or LM Studio is running."
+                        .to_string(),
+                );
+            }
+            if !detected.iter().any(|x| x == id) {
+                return Err(format!(
+                    "\"{id}\" is not currently detected (detected: {}).",
+                    detected.join(", ")
+                ));
+            }
+            Ok(Some(
+                detected
+                    .iter()
+                    .filter(|x| x.as_str() != id)
+                    .cloned()
+                    .collect(),
+            ))
+        }
+        (false, Some(wl)) => {
+            if !wl.iter().any(|x| x == id) {
+                return Ok(Some(wl)); // already hidden: nothing to narrow
+            }
+            Ok(Some(wl.into_iter().filter(|x| x != id).collect()))
+        }
+    }
+}
+
+/// `anyr relay models enable|disable <raw-local-id>` for a local server model
+/// (on-device catalog ids are handled by run_relay_model_set instead).
+fn run_relay_local_model_set(
+    env: &BTreeMap<String, String>,
+    id: &str,
+    enable: bool,
+) -> Result<i32, String> {
+    let bin = crate::help::invoked_bin();
+    let paths = state::paths(env);
+    let mut prefs = state::load_prefs(&paths);
+    let running = matches!(state::running(&paths), state::Running::Yes(_));
+    let detected = detected_local_models();
+    let next = whitelist_toggle(prefs.local_models.clone(), &detected, id, enable)?;
+    if next == prefs.local_models {
+        println!(
+            "\"{id}\" is already {}.",
+            if enable { "exposed" } else { "hidden" }
+        );
+        return Ok(0);
+    }
+    prefs.local_models = next;
+    state::save_prefs(&paths, &prefs)?;
+    println!("{} {id}.", if enable { "Exposed" } else { "Hidden" });
+    if running {
+        println!("Applies within ~15s to the running relay.");
+    } else {
+        println!("Applies on the next `{bin} relay start`.");
+    }
+    Ok(0)
+}
+
+/// `anyr relay models auto [on|off]` — show or save the runtime model watch.
+fn run_relay_models_auto(
+    env: &BTreeMap<String, String>,
+    set: Option<bool>,
+    json_out: bool,
+) -> Result<i32, String> {
+    let bin = crate::help::invoked_bin();
+    let paths = state::paths(env);
+    let mut prefs = state::load_prefs(&paths);
+    match set {
+        None => {
+            let on = state::effective_auto_detect(&prefs);
+            let source = if prefs.auto_detect.is_some() {
+                "saved"
+            } else {
+                "default"
+            };
+            if json_out {
+                println!("{:#}", json!({ "auto_detect": on, "source": source }));
+                return Ok(0);
+            }
+            println!("Auto-detect: {}", if on { "on" } else { "off" });
+            println!(
+                "`{bin} relay models auto {}` to change",
+                if on { "off" } else { "on" }
+            );
+        }
+        Some(on) => {
+            prefs.auto_detect = Some(on);
+            state::save_prefs(&paths, &prefs)?;
+            let running = matches!(state::running(&paths), state::Running::Yes(_));
+            if json_out {
+                println!("{:#}", json!({ "auto_detect": on, "source": "saved" }));
+                return Ok(0);
+            }
+            println!("Auto-detect {} (saved).", if on { "on" } else { "off" });
+            if running {
+                println!("Applies within ~15s to the running relay.");
+            } else {
+                println!("Applies on the next `{bin} relay start`.");
+            }
+        }
+    }
+    Ok(0)
+}
+
+/// `anyr relay models allow-all` — drop the local whitelist.
+fn run_relay_models_allow_all(
+    env: &BTreeMap<String, String>,
+    json_out: bool,
+) -> Result<i32, String> {
+    let bin = crate::help::invoked_bin();
+    let paths = state::paths(env);
+    let mut prefs = state::load_prefs(&paths);
+    prefs.local_models = None;
+    state::save_prefs(&paths, &prefs)?;
+    let running = matches!(state::running(&paths), state::Running::Yes(_));
+    if json_out {
+        println!("{:#}", json!({ "local_models": null }));
+        return Ok(0);
+    }
+    println!("Exposure: every detected local model will be advertised.");
+    if running {
+        println!("Applies within ~15s to the running relay.");
+    } else {
+        println!("Applies on the next `{bin} relay start`.");
+    }
     Ok(0)
 }
 
@@ -3012,12 +3360,7 @@ fn run_relay_model_set(
 ) -> Result<i32, String> {
     let bin = crate::help::invoked_bin();
     let Some(model) = OnDeviceModel::from_id(id) else {
-        let known: Vec<&str> = OnDeviceModel::ALL.iter().map(|m| m.id()).collect();
-        return Err(crate::cmd::dispatch::hint(&format!(
-            "Unknown on-device model \"{id}\" (known: {}).\nOther local servers are always served; \
-             stop them to stop serving their models.",
-            known.join(", ")
-        )));
+        return run_relay_local_model_set(env, id, enable);
     };
     let paths = state::paths(env);
     let mut prefs = state::load_prefs(&paths);
@@ -3300,6 +3643,8 @@ pub fn run(
         cli::Cmd::DeviceModels => devices::run_models(parsed, env),
         cli::Cmd::Devices(d) => devices::run(parsed, env, d),
         cli::Cmd::ModelSet { id, enable } => run_relay_model_set(env, &id, enable),
+        cli::Cmd::ModelsAuto { set, json } => run_relay_models_auto(env, set, json),
+        cli::Cmd::ModelsAllowAll { json } => run_relay_models_allow_all(env, json),
         cli::Cmd::Pool { set, json } => run_relay_pool(parsed, env, set, json),
         cli::Cmd::Pair => run_relay_pair(parsed, env),
         cli::Cmd::Rename { name } => run_relay_rename(parsed, env, &name),
@@ -4404,7 +4749,7 @@ profiles:
             (200, r#"{"data":[{"id":"_base"}]}"#.into()), // GET /models
             (200, completion.into()),                     // POST /chat/completions
         ]);
-        let router = Router::new(vec![chat_target("stub", &local)]);
+        let mut router = Router::new(vec![chat_target("stub", &local, None)]);
 
         let trace: Arc<Mutex<Vec<String>>> = Arc::default();
         let cloud_trace = Arc::clone(&trace);
@@ -4462,7 +4807,15 @@ profiles:
         let state = ConnState::new(Arc::default());
         let (done_tx, done_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let end = serve_connection(&mut ws, &router, &state, None, &|_| {});
+            let end = serve_connection(
+                &mut ws,
+                &mut router,
+                &state,
+                None,
+                &|_| {},
+                &BTreeMap::new(),
+                None,
+            );
             let _ = done_tx.send(end);
         });
         let end = done_rx
@@ -4574,7 +4927,7 @@ profiles:
 
     #[test]
     fn routing_failure_sends_an_error_frame() {
-        let r = sample_router();
+        let mut r = sample_router();
         let (url, _seen, cloud_join) = spawn_mock_cloud(None, |ws| {
             let _hello = ws.read().unwrap();
             ws.send(tungstenite::Message::text(
@@ -4596,13 +4949,21 @@ profiles:
         let mut ws = connect_ws(&url, "sk-ar-v1-test").expect("connect");
         set_socket_timeouts(&ws, Duration::from_millis(20), Duration::from_secs(30));
         let state = ConnState::new(Arc::default());
-        serve_connection(&mut ws, &r, &state, None, &|_| {});
+        serve_connection(
+            &mut ws,
+            &mut r,
+            &state,
+            None,
+            &|_| {},
+            &BTreeMap::new(),
+            None,
+        );
         cloud_join.join().expect("mock cloud assertions");
     }
 
     #[test]
     fn serve_connection_sends_pool_in_hello_and_reports_the_bound_device() {
-        let r = Router::new(vec![t("only", TargetKind::Chat, &["m"])]);
+        let mut r = Router::new(vec![t("only", TargetKind::Chat, &["m"])]);
         let (url, _seen, cloud_join) = spawn_mock_cloud(None, |ws| {
             let hello: serde_json::Value =
                 serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
@@ -4624,9 +4985,15 @@ profiles:
             ..ConnState::new(Arc::default())
         };
         let bound = Mutex::new(Vec::new());
-        serve_connection(&mut ws, &r, &state, None, &|id| {
-            bound.lock().unwrap().push(id.to_string())
-        });
+        serve_connection(
+            &mut ws,
+            &mut r,
+            &state,
+            None,
+            &|id| bound.lock().unwrap().push(id.to_string()),
+            &BTreeMap::new(),
+            None,
+        );
         cloud_join.join().expect("mock cloud assertions");
         assert_eq!(*bound.lock().unwrap(), vec!["dev-42".to_string()]);
     }
@@ -4829,7 +5196,7 @@ profiles:
             fm_models: Some(fetched),
         };
         // Two chat targets so routing must match by model, as in the field.
-        let router = Router::new(vec![target, t("ollama", TargetKind::Chat, &["llama3"])]);
+        let mut router = Router::new(vec![target, t("ollama", TargetKind::Chat, &["llama3"])]);
         let (url, _seen, cloud_join) = spawn_mock_cloud(None, |ws| {
             let _hello = ws.read().unwrap();
             let send =
@@ -4868,7 +5235,15 @@ profiles:
         let mut ws = connect_ws(&url, "sk-ar-v1-test").expect("connect");
         set_socket_timeouts(&ws, Duration::from_millis(20), Duration::from_secs(30));
         let state = ConnState::new(Arc::default());
-        serve_connection(&mut ws, &router, &state, None, &|_| {});
+        serve_connection(
+            &mut ws,
+            &mut router,
+            &state,
+            None,
+            &|_| {},
+            &BTreeMap::new(),
+            None,
+        );
         cloud_join.join().expect("mock cloud assertions");
     }
 
@@ -5013,6 +5388,254 @@ profiles:
         assert!(
             frames.is_empty(),
             "cancelled before start must send no frames: {frames:?}"
+        );
+    }
+
+    /// A /models stub whose list can change between polls (the watch loop).
+    fn spawn_live_models_stub(
+        models: Arc<Mutex<Vec<String>>>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = std::thread::spawn(move || {
+            // 128 polls is plenty for a test and keeps the thread bounded.
+            for _ in 0..128 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 1024];
+                loop {
+                    match stream.read(&mut tmp) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&tmp[..n]);
+                            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let body = serde_json::json!({
+                    "data": models
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|id| json!({ "id": id }))
+                        .collect::<Vec<_>>()
+                })
+                .to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    #[test]
+    fn watch_readvertises_without_dropping_the_connection() {
+        let models = Arc::new(Mutex::new(vec!["existing".to_string()]));
+        let (local, local_join) = spawn_live_models_stub(Arc::clone(&models));
+        let mut router = Router::new(vec![chat_target("stub", &local, None)]);
+
+        let (url, _seen, cloud_join) = spawn_mock_cloud(None, |ws| {
+            // A read that never completes must fail the test, not hang CI.
+            let _ = ws.get_ref().set_read_timeout(Some(Duration::from_secs(20)));
+            let hello: serde_json::Value =
+                serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(hello["type"], "hello");
+            assert_eq!(hello["models"], json!(["existing"]));
+            // The watch must deliver a second hello carrying the new model.
+            let mut read = ws.read().unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            loop {
+                if let Ok(text) = read.to_text() {
+                    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+                    if v["type"] == "hello" {
+                        assert_eq!(v["models"], json!(["existing", "pulled"]));
+                        break;
+                    }
+                }
+                assert!(std::time::Instant::now() < deadline, "no hello within 20s");
+                read = ws.read().unwrap();
+            }
+            let _ = ws.close(None);
+            let _ = ws.flush();
+        });
+
+        let mut ws = connect_ws(&url, "sk-ar-v1-test").expect("connect to mock cloud");
+        set_socket_timeouts(&ws, Duration::from_millis(20), Duration::from_secs(30));
+        let home = temp_home("watch");
+        std::fs::create_dir_all(&home).unwrap();
+        let env = env_with(&home, &[]);
+        let state = ConnState::new(Arc::default());
+        let watch_paths = state::paths(&env);
+        // The new model shows up "after start" — the watch polls for it.
+        models.lock().unwrap().push("pulled".to_string());
+        serve_connection(
+            &mut ws,
+            &mut router,
+            &state,
+            None,
+            &|_| {},
+            &BTreeMap::new(),
+            Some((Duration::from_millis(20), watch_paths)),
+        );
+        cloud_join.join().expect("mock cloud assertions");
+        // The stub accepts on a loop; dropping its handle detaches it — the
+        // next test does not need it.
+        drop(local_join);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+// Watch-out block appended by the model watch patch: pure watch_refresh and
+// whitelist_toggle unit tests.
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    fn t(label: &str, kind: TargetKind, models: &[&str]) -> Target {
+        Target {
+            label: label.into(),
+            base: format!("http://127.0.0.1:1/{label}/v1"),
+            kind,
+            models: models.iter().map(|m| m.to_string()).collect(),
+            fm_models: None,
+        }
+    }
+
+    #[test]
+    fn watch_adds_a_newly_pulled_model() {
+        let targets = vec![t("ollama", TargetKind::Chat, &["a"])];
+        let out = watch_refresh(&targets, vec![Some(vec!["a".into(), "b".into()])], None)
+            .expect("change expected");
+        assert_eq!(
+            out.targets[0].models,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(out.added, vec!["b".to_string()]);
+        assert!(out.removed.is_empty());
+    }
+
+    #[test]
+    fn watch_removes_a_gone_model() {
+        let targets = vec![t("ollama", TargetKind::Chat, &["a", "b"])];
+        let out =
+            watch_refresh(&targets, vec![Some(vec!["a".into()])], None).expect("change expected");
+        assert_eq!(out.targets[0].models, vec!["a".to_string()]);
+        assert_eq!(out.removed, vec!["b".to_string()]);
+        assert!(out.added.is_empty());
+    }
+
+    #[test]
+    fn watch_is_none_when_nothing_changed() {
+        let targets = vec![t("ollama", TargetKind::Chat, &["a"])];
+        assert!(watch_refresh(&targets, vec![Some(vec!["a".into()])], None).is_none());
+        assert!(
+            watch_refresh(&targets, vec![None], Some(&["a".to_string()])).is_none(),
+            "a failed probe keeps the last-known list"
+        );
+    }
+
+    #[test]
+    fn watch_keeps_one_targets_list_when_its_probe_fails() {
+        let targets = vec![
+            t("ollama", TargetKind::Chat, &["a"]),
+            t("lmstudio", TargetKind::Chat, &["x"]),
+        ];
+        let out = watch_refresh(
+            &targets,
+            vec![None, Some(vec!["x".into(), "y".into()])],
+            None,
+        )
+        .expect("the healthy probe still refreshes");
+        assert_eq!(out.targets[0].models, vec!["a".to_string()]);
+        assert_eq!(
+            out.targets[1].models,
+            vec!["x".to_string(), "y".to_string()]
+        );
+        assert_eq!(out.added, vec!["y".to_string()]);
+    }
+
+    #[test]
+    fn watch_whitelist_filters_but_fm_join_key_survives() {
+        let targets = vec![Target {
+            label: "fm serve".into(),
+            base: FM_SERVE_TARGET.into(),
+            kind: TargetKind::Chat,
+            models: vec!["foundation-model".into(), "system".into()],
+            fm_models: Some(vec!["system".into(), "pcc".into()]),
+        }];
+        let out = watch_refresh(
+            &targets,
+            vec![Some(vec!["system".into(), "pcc".into()])],
+            Some(&["pcc".to_string()]),
+        )
+        .expect("list changed under the whitelist");
+        assert_eq!(
+            out.targets[0].models,
+            vec!["pcc".to_string(), FM_SERVE_ADVERTISED_MODEL_ID.to_string()]
+        );
+        assert_eq!(
+            out.targets[0].fm_models,
+            Some(vec!["system".to_string(), "pcc".to_string()]),
+            "fm_models keeps the raw ids for map_fm_model"
+        );
+    }
+
+    #[test]
+    fn watch_passes_non_chat_targets_through() {
+        let targets = vec![
+            t(
+                "decider",
+                TargetKind::Decider,
+                &[DECIDER_ADVERTISED_MODEL_ID],
+            ),
+            t("ollama", TargetKind::Chat, &["a"]),
+        ];
+        assert!(watch_refresh(&targets, vec![None, Some(vec!["a".into()])], None).is_none());
+    }
+
+    #[test]
+    fn whitelist_toggle_covers_every_branch() {
+        let detected = vec!["a".to_string(), "b".to_string()];
+        // enable with no whitelist: already all exposed, nothing to save.
+        assert_eq!(whitelist_toggle(None, &detected, "c", true).unwrap(), None);
+        // enable into a whitelist, sorted and deduped.
+        assert_eq!(
+            whitelist_toggle(Some(vec!["b".into()]), &detected, "a", true).unwrap(),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        // enable an id already in the whitelist: stable.
+        assert_eq!(
+            whitelist_toggle(Some(vec!["a".into()]), &detected, "a", true).unwrap(),
+            Some(vec!["a".to_string()])
+        );
+        // disable with no whitelist: materialize detected minus `id`.
+        assert_eq!(
+            whitelist_toggle(None, &detected, "a", false).unwrap(),
+            Some(vec!["b".to_string()])
+        );
+        // disable with no whitelist and an unknown id: an error, not a guess.
+        assert!(whitelist_toggle(None, &detected, "zzz", false).is_err());
+        assert!(whitelist_toggle(None, &[], "a", false).is_err());
+        // disable from a whitelist: member removed, non-member stable.
+        assert_eq!(
+            whitelist_toggle(Some(vec!["a".into(), "b".into()]), &detected, "a", false).unwrap(),
+            Some(vec!["b".to_string()])
+        );
+        assert_eq!(
+            whitelist_toggle(Some(vec!["a".into()]), &detected, "zzz", false).unwrap(),
+            Some(vec!["a".to_string()])
         );
     }
 }

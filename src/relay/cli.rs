@@ -29,6 +29,15 @@ pub(super) enum Cmd {
         id: String,
         enable: bool,
     },
+    /// `relay models auto [on|off]`: show or save the runtime model watch.
+    ModelsAuto {
+        set: Option<bool>,
+        json: bool,
+    },
+    /// `relay models allow-all`: drop the local whitelist.
+    ModelsAllowAll {
+        json: bool,
+    },
     Pool {
         set: Option<bool>,
         json: bool,
@@ -145,9 +154,27 @@ pub(super) fn parse_cmd(parsed: &ParsedArgs) -> Result<Cmd, String> {
                     enable: verb == "enable",
                 }
             }
+            Some("auto") => {
+                let set = match words.get(2).copied() {
+                    None => None,
+                    Some("on") => Some(true),
+                    Some("off") => Some(false),
+                    Some(other) => {
+                        return Err(usage(&format!(
+                            "`relay models auto` takes on or off, got \"{other}\"."
+                        )))
+                    }
+                };
+                extra(3)?;
+                Cmd::ModelsAuto { set, json }
+            }
+            Some("allow-all") => {
+                extra(2)?;
+                Cmd::ModelsAllowAll { json }
+            }
             Some(other) => {
                 return Err(usage(&format!(
-                    "Unknown `relay models` action \"{other}\" (use enable or disable)."
+                    "Unknown `relay models` action \"{other}\" (use enable, disable, auto or allow-all)."
                 )))
             }
         },
@@ -274,6 +301,32 @@ mod tests {
             }
         );
         assert_eq!(
+            cmd(&["models", "auto"]),
+            Cmd::ModelsAuto {
+                set: None,
+                json: false
+            }
+        );
+        assert_eq!(
+            cmd(&["models", "auto", "on"]),
+            Cmd::ModelsAuto {
+                set: Some(true),
+                json: false
+            }
+        );
+        assert_eq!(
+            cmd(&["models", "auto", "off", "--json"]),
+            Cmd::ModelsAuto {
+                set: Some(false),
+                json: true
+            }
+        );
+        assert_eq!(
+            cmd(&["models", "allow-all"]),
+            Cmd::ModelsAllowAll { json: false }
+        );
+        assert!(parse_cmd(&p(&["models", "auto", "maybe"])).is_err());
+        assert_eq!(
             cmd(&["pool"]),
             Cmd::Pool {
                 set: None,
@@ -321,7 +374,10 @@ mod tests {
             (&["wat"][..], "Unknown relay subcommand: wat"),
             (&["pool", "maybe"], "on or off"),
             (&["models", "enable"], "needs a model id"),
-            (&["models", "toggle", "x"], "enable or disable"),
+            (
+                &["models", "toggle", "x"],
+                "enable, disable, auto or allow-all",
+            ),
             (&["stop", "--detach"], "--detach does not apply"),
             (&["start", "--json"], "--json does not apply"),
             (&["logs", "--lines", "0"], "positive number"),
