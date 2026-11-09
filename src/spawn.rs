@@ -1677,6 +1677,18 @@ pub fn model_args_for(
         // config and falls back to its own default.
         return vec!["-m".into(), format!("anyrouter/{catalog}")];
     }
+    if tool_name == "opencode" {
+        // OpenCode's `run` selects the model from its `--model` CLI flag; the
+        // injected `OPENCODE_CONFIG_CONTENT` registers the anyrouter provider
+        // but `run` does not honour its top-level model. Pass the catalog id
+        // as the `anyrouter/<model>` ref OpenCode resolves through the
+        // configured provider. Virtual presets (`anyrouter/auto`, …) are routed
+        // by the gateway per request, so there is no single id to pin.
+        if is_virtual_preset(&catalog) {
+            return vec![];
+        }
+        return vec!["--model".into(), format!("anyrouter/{catalog}")];
+    }
     if tool_name != "codex" {
         return vec![];
     }
@@ -1715,12 +1727,43 @@ fn split_origin(url: &str) -> (&str, &str) {
 pub fn opencode_standalone_args(args: &[String], major: Option<u32>) -> Vec<String> {
     let mut out = args.to_vec();
     if major.is_some_and(|m| m >= 2) {
-        match out.first().map(String::as_str) {
-            // `--standalone` is a flag of `run`, not a root flag placed before it.
-            Some("run") => out.insert(1, "--standalone".into()),
-            None => out.push("--standalone".into()),
-            Some(first) if first.starts_with('-') => out.insert(0, "--standalone".into()),
-            Some(_) => {}
+        // `--standalone` and `--model <id>` are flags of `run`, not root
+        // flags, so they must follow the `run` subcommand. `--model` is
+        // injected by `model_args_for` ahead of the user args, so pull it
+        // out and re-insert it next to `--standalone` after `run`.
+        let model_pair = out.iter().position(|a| a == "--model").and_then(|mp| {
+            (mp + 1 < out.len() && !out[mp + 1].starts_with('-'))
+                .then_some((mp, out[mp + 1].clone()))
+        });
+        let model = model_pair.as_ref().map(|(_, catalog)| catalog.clone());
+        if let Some((mp, _)) = model_pair {
+            out.remove(mp + 1);
+            out.remove(mp);
+        }
+        let run_pos = out.iter().position(|a| a == "run");
+        match run_pos {
+            Some(pos) => {
+                out.insert(pos + 1, "--standalone".into());
+                if let Some(catalog) = &model {
+                    out.insert(pos + 2, "--model".into());
+                    out.insert(pos + 3, catalog.clone());
+                }
+            }
+            None => {
+                if out.is_empty() {
+                    out.push("--standalone".into());
+                    if let Some(catalog) = &model {
+                        out.push("--model".into());
+                        out.push(catalog.clone());
+                    }
+                } else if out.first().map(|s| s.starts_with('-')).unwrap_or(false) {
+                    out.insert(0, "--standalone".into());
+                    if let Some(catalog) = &model {
+                        out.insert(1, "--model".into());
+                        out.insert(2, catalog.clone());
+                    }
+                }
+            }
         }
     }
     out
@@ -1946,6 +1989,47 @@ mod tests {
     }
 
     #[test]
+    fn opencode_model_follows_run_for_v2() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // `--model` is a `run` flag: it must follow `run` (and `--standalone`),
+        // not precede them as a root flag.
+        assert_eq!(
+            opencode_standalone_args(
+                &a(&["--model", "anyrouter/claude-3-5-sonnet", "run", "hi"]),
+                Some(2)
+            ),
+            a(&[
+                "run",
+                "--standalone",
+                "--model",
+                "anyrouter/claude-3-5-sonnet",
+                "hi"
+            ])
+        );
+        // No `run` (interactive): `--standalone` leads, `--model` follows it.
+        assert_eq!(
+            opencode_standalone_args(
+                &a(&["--model", "anyrouter/claude-3-5-sonnet", "--verbose"]),
+                Some(2)
+            ),
+            a(&[
+                "--standalone",
+                "--model",
+                "anyrouter/claude-3-5-sonnet",
+                "--verbose"
+            ])
+        );
+        // v1 rejects `--standalone` and leaves args untouched.
+        assert_eq!(
+            opencode_standalone_args(
+                &a(&["--model", "anyrouter/claude-3-5-sonnet", "run", "hi"]),
+                Some(1)
+            ),
+            a(&["--model", "anyrouter/claude-3-5-sonnet", "run", "hi"])
+        );
+    }
+
+    #[test]
     fn codex_gets_model_context_window_only_for_a_concrete_model() {
         let args = model_args_for(
             "codex",
@@ -1971,6 +2055,24 @@ mod tests {
         }
         // Auto: the gateway picks the model per request, so no single window.
         assert!(model_args_for("codex", "anyrouter/auto", "auto", Some(200_000)).is_empty());
+    }
+
+    #[test]
+    fn opencode_passes_catalog_model_through_cli_flag() {
+        // OpenCode's `run` selects the model from `--model`; the injected
+        // `OPENCODE_CONFIG_CONTENT` registers the provider but `run` does not
+        // honour its top-level model, so pass the `anyrouter/<model>` ref.
+        assert_eq!(
+            model_args_for("opencode", "claude-3-5-sonnet", "concrete", None),
+            ["--model", "anyrouter/claude-3-5-sonnet"]
+        );
+        assert_eq!(
+            model_args_for("opencode", "deepseek/deepseek-v4-flash", "concrete", None),
+            ["--model", "anyrouter/deepseek/deepseek-v4-flash"]
+        );
+        // Virtual presets are routed by the gateway per request, pin nothing.
+        assert!(model_args_for("opencode", "anyrouter/auto", "auto", None).is_empty());
+        assert!(model_args_for("opencode", "anyrouter/free", "concrete", None).is_empty());
     }
 
     use super::*;

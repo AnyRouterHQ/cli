@@ -15,14 +15,25 @@ use std::time::Duration;
 const FAKE: &str = r#"#!/bin/sh
 case "$1" in --version) echo "$FAKE_OC_VERSION"; exit 0;; esac
 standalone=0
+model_pos=-1
+run_pos=-1
+i=0
 for a in "$@"; do
-  if [ "$a" = "--standalone" ]; then standalone=1; fi
+  [ "$a" = "--standalone" ] && standalone=1
+  [ "$a" = "--model" ] && model_pos=$i
+  [ "$a" = "run" ] && run_pos=$i
+  i=$((i+1))
 done
 case "$FAKE_OC_VERSION" in
   *v2.*)
     if [ "$standalone" = 0 ]; then
       echo "Error: This API key has expired. Create a new API key in OpenCode Console" >&2
       exit 3
+    fi
+    # `--model` is a `run` flag: it must follow `run`, never precede it.
+    if [ $model_pos -ge 0 ] && [ $run_pos -ge 0 ] && [ $model_pos -le $run_pos ]; then
+      echo "ERROR: --model must come after run, found model=$model_pos run=$run_pos" >&2
+      exit 4
     fi ;;
   *)
     if [ "$standalone" = 1 ]; then echo "Unrecognized flag: --standalone" >&2; exit 2; fi ;;
@@ -124,8 +135,16 @@ fn dry_run_args(version: &str, tag: &str) -> String {
 
 #[test]
 fn dry_run_shows_standalone_for_opencode_2_only() {
-    assert!(dry_run_args("opencode v2.0.24", "v2").contains(r#"args: ["run","--standalone","hi"]"#));
-    assert!(dry_run_args("1.4.3", "v1").contains(r#"args: ["run","hi"]"#));
+    #[test]
+    fn dry_run_shows_standalone_for_opencode_2_only() {
+        let out = dry_run_args("opencode v2.0.24", "v2");
+        // `--model` is a `run` flag and must follow `run` (and `--standalone`).
+        assert!(
+        out.contains(r#"args: ["run","--standalone","--model","anyrouter/deepseek/deepseek-v4-flash","hi"]"#),
+        "unexpected args:\n{out}"
+    );
+        assert!(dry_run_args("1.4.3", "v1").contains(r#"args: ["run","hi"]"#));
+    }
 }
 
 fn dry_run_auto(tag: &str) -> String {
