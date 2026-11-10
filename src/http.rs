@@ -393,6 +393,11 @@ pub fn http_get_github(_url: &str, _token: &str) -> Result<(u16, String), String
 }
 
 #[cfg(not(feature = "native"))]
+pub fn http_get_github_unauth(_url: &str) -> Result<(u16, String), String> {
+    no_network()
+}
+
+#[cfg(not(feature = "native"))]
 pub fn http_get_web(_url: &str) -> Result<(u16, String), String> {
     no_network()
 }
