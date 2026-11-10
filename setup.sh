@@ -6,6 +6,21 @@
 # Assets: https://github.com/AnyRouterHQ/cli/releases/download/<tag>/anyr-<os>-<arch>
 set -euo pipefail
 
+# `curl ... | sudo bash` is common but unneeded: the install goes under the
+# user's home. When sudo is used anyway, install for the invoking user (not
+# root's home) and hand the files back to them. ANYR_TEST_EUID is a test hook.
+EUID_NOW="${ANYR_TEST_EUID:-$(id -u)}"
+AS_USER=""
+if [ "$EUID_NOW" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] \
+  && printf '%s' "$SUDO_USER" | grep -qE '^[A-Za-z0-9._-]+$'; then
+  AS_USER="$SUDO_USER"
+  _home="$(eval echo "~${AS_USER}")"
+  if [ -d "$_home" ]; then
+    HOME="$_home"
+    export HOME
+  fi
+fi
+
 REPO="AnyRouterHQ/cli"
 GITHUB="https://github.com/AnyRouterHQ/cli"
 GITHUB_API="https://api.github.com/repos/AnyRouterHQ/cli"
@@ -160,7 +175,16 @@ write_otlp_telemetry_endpoint() {
     printf 'active_profile: default\ntelemetry_endpoint: %s\n' "$TELEMETRY_OTLP_ENDPOINT" > "$cfg"
     chmod 600 "$cfg"
   fi
+  hand_back "$cfg_dir"
   step "Telemetry" "$(tilde "$cfg") -> ${TELEMETRY_OTLP_ENDPOINT}"
+}
+
+# Give files we created as root back to the user who ran sudo.
+hand_back() {
+  [ -n "$AS_USER" ] || return 0
+  local grp
+  grp="$(id -gn "$AS_USER" 2>/dev/null || printf '%s' "$AS_USER")"
+  chown -hR "${AS_USER}:${grp}" "$@" 2>/dev/null || true
 }
 
 # Run the installed binary once: prints the version and proves it launches.
@@ -182,6 +206,13 @@ report_version() {
 install_bin() {
   local src="$1" dest="${BIN_DIR}/${BIN_NAME}"
   [ -f "$src" ] || die "source is not a file: $src"
+  # Remember the topmost directory we are about to create, so root-created
+  # parents (~/.local) can be handed back too.
+  created_top=""
+  if [ ! -d "$BIN_DIR" ]; then
+    created_top="$BIN_DIR"
+    while [ ! -d "$(dirname "$created_top")" ]; do created_top="$(dirname "$created_top")"; done
+  fi
   mkdir -p "$BIN_DIR"
   # Stage next to the target and rename into place. Overwriting an existing
   # executable in place keeps its inode, and macOS can keep judging the new
@@ -224,6 +255,11 @@ install_bin() {
       fi
       ;;
   esac
+  if [ -n "$created_top" ]; then
+    hand_back "$created_top"
+  else
+    hand_back "${BIN_DIR}/${BIN_NAME}" "${BIN_DIR}/anyrouter"
+  fi
   report_version
   case ":${PATH}:" in
     *":${BIN_DIR}:"*) ;;
@@ -459,9 +495,7 @@ resolve_download_url() {
 }
 
 header
-if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
-  warn "sudo" "not needed: the files will be owned by root. Run without sudo."
-fi
+[ -z "$AS_USER" ] || note "sudo is not needed. Installing for ${AS_USER}."
 step "Detected" "${os}/${arch} ${C_DIM}·${C_OFF} ${CHANNEL} channel"
 working "Finding the release"
 url="$(resolve_download_url)"
