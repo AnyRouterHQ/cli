@@ -36,8 +36,6 @@ const STATE_FILE: &str = "telemetry.json";
 #[cfg(feature = "native")]
 const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-pub const NOTICE: &str = "anyr sends one anonymous ping per install, per update or per day (random id, version, OS, CPU). Turn it off with ANYR_NO_TELEMETRY=1, DO_NOT_TRACK=1 or `telemetry: false` in the config.";
-
 /// Seconds in one UTC day; the daily ping fires when the day moves on.
 pub const SECS_PER_DAY: u64 = 24 * 60 * 60;
 
@@ -299,7 +297,6 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
     let Some(kind) = decide(&state, crate::VERSION, today) else {
         return;
     };
-    let fresh = state.install_id.is_none();
     let id = state.install_id.clone().unwrap_or_else(new_install_id);
     state.install_id = Some(id.clone());
     state.last_version = Some(crate::VERSION.to_string());
@@ -307,12 +304,6 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
     // the daily ping for the rest of the UTC day.
     state.last_daily = Some(today);
     save(env, &state);
-    if fresh {
-        use std::io::IsTerminal;
-        if std::io::stderr().is_terminal() {
-            eprintln!("{}", crate::term::dim(NOTICE));
-        }
-    }
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
     if let Some(url) = otlp_ep {
