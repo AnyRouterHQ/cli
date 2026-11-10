@@ -331,58 +331,6 @@ EOF
   die "no GitHub release has ${asset}"
 }
 
-# Unauthenticated GitHub REST API for public repos. Works from home
-# networks (60 req/hour); shared IPs (CI runners) get 403 and should use
-# GH_TOKEN with pick_tag_from_api instead.
-pick_tag_from_api_unauth() {
-  local json
-  json="$(curl_ua -fsSL \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
-    -H "User-Agent: anyr-setup" \
-    "${GITHUB_API}/releases")" || return 1
-  command -v python3 >/dev/null 2>&1 || die "python3 is required to parse GitHub Releases JSON"
-  printf '%s' "$json" | python3 -c '
-import json, sys
-asset, channel = sys.argv[1], sys.argv[2]
-releases = json.load(sys.stdin)
-
-def tag_of(rel):
-    if rel.get("draft"):
-        return ""
-    return rel.get("tag_name") or ""
-
-def has_asset(rel):
-    names = [a.get("name") for a in (rel.get("assets") or [])]
-    return asset in names
-
-def is_pre(rel):
-    return bool(rel.get("prerelease"))
-
-ordered = [r for r in releases if tag_of(r)]
-# GitHub already returns newest-first; keep that order.
-if channel == "beta":
-    for rel in ordered:
-        if is_pre(rel) and has_asset(rel):
-            print(tag_of(rel))
-            sys.exit(0)
-    sys.stderr.write("no beta release has %s\n" % asset)
-    sys.exit(1)
-
-for rel in ordered:
-    if (not is_pre(rel)) and has_asset(rel):
-        print(tag_of(rel))
-        sys.exit(0)
-# Stable latest is often empty (v0.1.11). Use newest release that has binaries.
-for rel in ordered:
-    if has_asset(rel):
-        print(tag_of(rel))
-        sys.exit(0)
-sys.stderr.write("no GitHub release has %s\n" % asset)
-sys.exit(1)
-' "$asset" "$CHANNEL"
-}
-
 resolve_download_url() {
   local tag url token
   if [ -n "$VERSION" ]; then
@@ -400,16 +348,6 @@ resolve_download_url() {
     fi
     echo "setup.sh: authenticated GitHub API failed; listing github.com/releases instead" >&2
   fi
-
-  # Unauthenticated REST API — works for public repos from home networks
-  # (60 req/hour). More reliable than HTML scraping, which GitHub blocks
-  # for anonymous requests.
-  if tag="$(pick_tag_from_api_unauth)"; then
-    [ -n "$tag" ] || die "empty tag from GitHub API"
-    printf '%s' "$(download_url_for_tag "$tag")"
-    return 0
-  fi
-  echo "setup.sh: unauthenticated GitHub API failed; listing github.com/releases instead" >&2
 
   if [ "$CHANNEL" = "stable" ]; then
     url="${GITHUB}/releases/latest/download/${asset}"
