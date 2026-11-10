@@ -146,6 +146,13 @@ install_bin() {
   [ -f "$src" ] || die "source is not a file: $src"
   mkdir -p "$BIN_DIR"
   cp "$src" "${BIN_DIR}/${BIN_NAME}"
+  # macOS Gatekeeper can SIGKILL a freshly curl'd binary before it starts; that
+  # is what "error: killed" means. Clear the quarantine xattr if present.
+  if command -v xattr >/dev/null 2>&1; then
+    for attr in com.apple.quarantine com.apple.security; do
+      xattr -d "$attr" "${BIN_DIR}/${BIN_NAME}" 2>/dev/null || true
+    done
+  fi
   # Windows does not have Unix chmod or symlinks; Linux/Darwin do.
   if [ "$(uname -s)" != MSYS* ] && [ "$(uname -s)" != MINGW* ] && [ "$(uname -s)" != CYGWIN* ]; then
     chmod +x "${BIN_DIR}/${BIN_NAME}"
