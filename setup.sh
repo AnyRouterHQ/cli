@@ -11,10 +11,15 @@ GITHUB="https://github.com/AnyRouterHQ/cli"
 GITHUB_API="https://api.github.com/repos/AnyRouterHQ/cli"
 
 BIN_NAME="anyr"
+[[ "$(uname -s)" == MSYS* || "$(uname -s)" == MINGW* || "$(uname -s)" == CYGWIN* ]] && BIN_NAME="anyr.exe"
 BIN_DIR="${ANYR_BIN_DIR:-${HOME}/.local/bin}"
 CHANNEL="${ANYR_CHANNEL:-stable}"
 VERSION="${ANYR_VERSION:-}"
 CURL="${ANYR_CURL:-curl}"
+# When set, anyr writes `telemetry_endpoint: <url>` to the active config after
+# install, so the installed binary sends OTLP telemetry to your own collector
+# instead of PostHog.
+TELEMETRY_OTLP_ENDPOINT="${ANYR_TELEMETRY_OTLP_ENDPOINT:-}"
 
 usage() {
   cat <<EOF
@@ -39,11 +44,14 @@ Env:
   ANYR_CHANNEL     stable (default) | beta
   ANYR_VERSION     install this tag (v prefix optional)
   ANYR_BIN_DIR     install directory (default: ~/.local/bin)
+  ANYR_TELEMETRY_OTLP_ENDPOINT   send telemetry to your own
+                    OpenTelemetry collector over OTLP/HTTP (e.g. http://localhost:4318)
+                    instead of PostHog. Written to the anyr config file.
   ANYR_SETUP_BIN   if this is a file, copy it instead of downloading (tests)
   GH_TOKEN / GITHUB_TOKEN   optional; authenticated api.github.com (avoids 403)
   ANYR_CURL        curl binary (tests)
 
-Assets: anyr-linux-x86_64 anyr-linux-arm64 anyr-darwin-x86_64 anyr-darwin-arm64
+Assets: anyr-linux-x86_64 anyr-linux-arm64 anyr-darwin-x86_64 anyr-darwin-arm64 anyr-windows-x86_64.exe
 EOF
 }
 
@@ -101,7 +109,8 @@ detect_os() {
   case "$(uname -s)" in
     Linux) printf 'linux' ;;
     Darwin) printf 'darwin' ;;
-    *) die "unsupported OS: $(uname -s) (need linux or darwin)" ;;
+    MSYS*|MINGW*|CYGWIN*) printf 'windows' ;;
+    *) die "unsupported OS: $(uname -s) (need linux, darwin or windows)" ;;
   esac
 }
 
@@ -113,30 +122,60 @@ detect_arch() {
   esac
 }
 
+write_otlp_telemetry_endpoint() {
+  [ -n "$TELEMETRY_OTLP_ENDPOINT" ] || return 0
+  local cfg_dir="${HOME}/.anyrouter" cfg="${cfg_dir}/config.yaml"
+  mkdir -p "$cfg_dir"
+  # Write or update telemetry_endpoint in the active config.
+  if [ -f "$cfg" ]; then
+    if grep -q '^telemetry_endpoint:' "$cfg"; then
+      sed -i.bak 's/^telemetry_endpoint:.*/telemetry_endpoint: '"$TELEMETRY_OTLP_ENDPOINT"'/' "$cfg"
+      rm -f "${cfg}.bak"
+    else
+      printf 'telemetry_endpoint: %s\n' "$TELEMETRY_OTLP_ENDPOINT" >> "$cfg"
+    fi
+  else
+    printf 'active_profile: default\ntelemetry_endpoint: %s\n' "$TELEMETRY_OTLP_ENDPOINT" > "$cfg"
+    chmod 600 "$cfg"
+  fi
+  echo "Telemetry endpoint written to ${cfg}: ${TELEMETRY_OTLP_ENDPOINT}"
+}
+
 install_bin() {
   local src="$1"
   [ -f "$src" ] || die "source is not a file: $src"
   mkdir -p "$BIN_DIR"
   cp "$src" "${BIN_DIR}/${BIN_NAME}"
-  chmod +x "${BIN_DIR}/${BIN_NAME}"
-  ln -sfn "$BIN_NAME" "${BIN_DIR}/anyrouter"
-  # Older installers also linked `ar`, which shadows the system archiver and
-  # breaks C/Rust builds. Remove it only when it points at anyr.
-  if [ -L "${BIN_DIR}/ar" ]; then
-    case "$(readlink "${BIN_DIR}/ar")" in
-      anyr | */anyr | anyrouter | */anyrouter)
-        rm -f "${BIN_DIR}/ar"
-        echo "Removed ${BIN_DIR}/ar (it shadowed the system ar archiver)"
-        ;;
-    esac
+  # Windows does not have Unix chmod or symlinks; Linux/Darwin do.
+  if [ "$(uname -s)" != MSYS* ] && [ "$(uname -s)" != MINGW* ] && [ "$(uname -s)" != CYGWIN* ]; then
+    chmod +x "${BIN_DIR}/${BIN_NAME}"
+    ln -sfn "$BIN_NAME" "${BIN_DIR}/anyrouter"
+    # Older installers also linked `ar`, which shadows the system archiver and
+    # breaks C/Rust builds. Remove it only when it points at anyr.
+    if [ -L "${BIN_DIR}/ar" ]; then
+      case "$(readlink "${BIN_DIR}/ar")" in
+        anyr | */anyr | anyrouter | */anyrouter)
+          rm -f "${BIN_DIR}/ar"
+          echo "Removed ${BIN_DIR}/ar (it shadowed the system ar archiver)"
+          ;;
+      esac
+    fi
   fi
   echo "Installed ${BIN_DIR}/${BIN_NAME}"
-  echo "Symlink: ${BIN_DIR}/anyrouter"
-  case ":${PATH}:" in
-    *":${BIN_DIR}:"*) ;;
-    *)
-      echo "Add ${BIN_DIR} to PATH:"
+  case "$(uname -s)" in
+    MSYS*|MINGW*|CYGWIN*)
+      echo "Add ${BIN_DIR} to your PATH in the Windows environment variables, or:"
       echo "  export PATH=\"${BIN_DIR}:\$PATH\""
+      ;;
+    *)
+      echo "Symlink: ${BIN_DIR}/anyrouter"
+      case ":${PATH}:" in
+        *":${BIN_DIR}:"*) ;;
+        *)
+          echo "Add ${BIN_DIR} to PATH:"
+          echo "  export PATH=\"${BIN_DIR}:\$PATH\""
+          ;;
+      esac
       ;;
   esac
   echo "Next:"
@@ -149,6 +188,7 @@ if [ -n "${ANYR_SETUP_BIN:-}" ]; then
   [ -f "$ANYR_SETUP_BIN" ] || die "ANYR_SETUP_BIN is not a file: $ANYR_SETUP_BIN"
   echo "ANYR_SETUP_BIN=${ANYR_SETUP_BIN} (local, no download)"
   install_bin "$ANYR_SETUP_BIN"
+  write_otlp_telemetry_endpoint
   exit 0
 fi
 
@@ -157,6 +197,7 @@ command -v "$CURL" >/dev/null 2>&1 || die "curl is required to download releases
 os="$(detect_os)"
 arch="$(detect_arch)"
 asset="anyr-${os}-${arch}"
+[ "$os" = windows ] && asset="${asset}.exe"
 
 github_token() {
   if [ -n "${GH_TOKEN:-}" ]; then
@@ -430,3 +471,4 @@ verify_checksum() {
 
 verify_checksum "$url" "$tmp"
 install_bin "$tmp"
+write_otlp_telemetry_endpoint

@@ -310,6 +310,10 @@ pub struct Config {
     pub auto_update: Option<bool>,
     /// `None` means default on. Explicit `false` stops the anonymous install ping.
     pub telemetry: Option<bool>,
+    /// Optional OpenTelemetry (OTLP/HTTP) endpoint for telemetry pings.
+    /// Written by the installer via `ANYR_TELEMETRY_OTLP_ENDPOINT` at install
+    /// time. When set, telemetry is sent as OTLP/HTTP/JSON metrics instead of PostHog.
+    pub telemetry_endpoint: Option<String>,
     /// Upgrade channel: `stable` (default) or `beta`. Not shown in `ar config`.
     pub channel: Option<String>,
     /// `mcp.auto`: `None` follows the workspace setting; `false` never wires the
@@ -328,6 +332,7 @@ impl Default for Config {
             last_tool: None,
             auto_update: None,
             telemetry: None,
+            telemetry_endpoint: None,
             channel: None,
             mcp_auto: None,
             profiles: BTreeMap::new(),
@@ -735,6 +740,9 @@ pub fn parse_config(source: &str) -> Config {
     if let Some(v) = root.get("telemetry") {
         config.telemetry = yaml_bool(v);
     }
+    if let Some(v) = root.get("telemetry_endpoint").and_then(|v| v.as_str()) {
+        config.telemetry_endpoint = Some(v.to_string());
+    }
     if let Some(v) = root
         .get("mcp")
         .and_then(|v| v.as_map())
@@ -799,6 +807,9 @@ pub fn serialize_config(config: &Config) -> String {
     }
     if let Some(v) = config.telemetry {
         lines.push(format!("telemetry: {v}"));
+    }
+    if let Some(ep) = &config.telemetry_endpoint {
+        lines.push(format!("telemetry_endpoint: {}", yaml_scalar(ep)));
     }
     if let Some(ch) = &config.channel {
         lines.push(format!("channel: {}", yaml_scalar(ch)));

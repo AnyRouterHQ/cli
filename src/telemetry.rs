@@ -109,6 +109,52 @@ pub fn decide(state: &State, version: &str, today: u64) -> Option<Kind> {
     }
 }
 
+/// OTLP/HTTP/JSON body for a single metric data point. Adds `kind` and `os` as
+/// attributes so the collector can distinguish install/update/daily.
+pub fn otlp_payload(install_id: &str, kind: &Kind, version: &str, os: &str, arch: &str) -> Value {
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let update_from = match kind {
+        Kind::Update { from } => Some(from.clone()),
+        _ => None,
+    };
+    json!({
+        "resourceMetrics": [{
+            "resource": {
+                "attributes": [
+                    { "key": "service.name", "value": { "stringValue": "anyr-cli" } },
+                    { "key": "service.version", "value": { "stringValue": version } },
+                    { "key": "os.type", "value": { "stringValue": os } },
+                    { "key": "host.arch", "value": { "stringValue": arch } },
+                    { "key": "cli.install_id", "value": { "stringValue": install_id } },
+                ],
+            },
+            "scopeMetrics": [{
+                "scope": { "name": "anyr.telemetry" },
+                "metrics": [{
+                    "name": kind.event(),
+                    "unit": "1",
+                    "sum": {
+                        "aggregationTemporality": 1,
+                        "isMonotonic": true,
+                        "dataPoints": [{
+                            "attributes": [
+                                { "key": "channel", "value": { "stringValue": if version.contains("beta") { "beta" } else { "stable" } } },
+                                { "key": "from_version", "value": { "stringValue": update_from.as_deref().unwrap_or("") } },
+                            ],
+                            "startTimeUnixNano": now_ns,
+                            "timeUnixNano": now_ns,
+                            "asInt": "1",
+                        }],
+                    },
+                }],
+            }],
+        }],
+    })
+}
+
 /// True when the ping may be sent. `config_flag` is the file's `telemetry:`.
 pub fn enabled(env: &BTreeMap<String, String>, config_flag: Option<bool>, dev_build: bool) -> bool {
     let on = |key: &str| env_flag(env, key) == Some(true);
@@ -225,9 +271,9 @@ fn send(url: &str, body: &Value) {
 /// waits on the network for it.
 #[cfg(feature = "native")]
 pub fn on_startup(env: &BTreeMap<String, String>) {
-    let config_flag =
-        crate::key::load_config_if_present(&crate::config::resolve_config_path(None, env))
-            .and_then(|c| c.telemetry);
+    let cfg = crate::key::load_config_if_present(&crate::config::resolve_config_path(None, env));
+    let config_flag = cfg.as_ref().and_then(|c| c.telemetry);
+    let otlp_ep = cfg.as_ref().and_then(|c| c.telemetry_endpoint.as_deref());
     let dev_build = is_dev_run(
         std::env::current_exe()
             .map(|exe| crate::autoupdate::is_cargo_target_build(&exe))
@@ -236,8 +282,11 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
     );
     let custom = endpoint(env);
     // A cargo build only stays quiet toward the real PostHog endpoint.
-    if !enabled(env, config_flag, dev_build && custom.is_none())
-        || env.contains_key(crate::autoupdate::ENV_AUTO_CHILD)
+    if !enabled(
+        env,
+        config_flag,
+        dev_build && custom.is_none() && otlp_ep.is_none(),
+    ) || env.contains_key(crate::autoupdate::ENV_AUTO_CHILD)
         || env.contains_key(crate::autoupdate::ENV_LAUNCHER_CHILD)
     {
         return;
@@ -264,14 +313,18 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
             eprintln!("{}", crate::term::dim(NOTICE));
         }
     }
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    if let Some(url) = otlp_ep {
+        let body = otlp_payload(&id, &kind, crate::VERSION, os, arch);
+        match kind {
+            Kind::Daily => spawn_daily_sender(&body, url),
+            Kind::Install | Kind::Update { .. } => send(url, &body),
+        }
+        return;
+    }
     let url = custom.as_deref().unwrap_or(POSTHOG_CAPTURE_URL);
-    let body = payload(
-        &id,
-        &kind,
-        crate::VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    );
+    let body = payload(&id, &kind, crate::VERSION, os, arch);
     match kind {
         Kind::Daily => spawn_daily_sender(&body, url),
         Kind::Install | Kind::Update { .. } => send(url, &body),

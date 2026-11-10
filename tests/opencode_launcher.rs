@@ -98,6 +98,7 @@ fn opencode_1_run_reaches_the_anyrouter_provider() {
     assert_hits_anyrouter("1.4.3", "v1");
 }
 
+#[allow(dead_code)] // called by the integration test harness; clippy doesn't model it
 fn dry_run_args(version: &str, tag: &str) -> String {
     let dir = std::env::temp_dir().join(format!("anyr-opencode-dry-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -135,16 +136,19 @@ fn dry_run_args(version: &str, tag: &str) -> String {
 
 #[test]
 fn dry_run_shows_standalone_for_opencode_2_only() {
-    #[test]
-    fn dry_run_shows_standalone_for_opencode_2_only() {
-        let out = dry_run_args("opencode v2.0.24", "v2");
-        // `--model` is a `run` flag and must follow `run` (and `--standalone`).
-        assert!(
-        out.contains(r#"args: ["run","--standalone","--model","anyrouter/deepseek/deepseek-v4-flash","hi"]"#),
+    let out = dry_run_args("opencode v2.0.24", "v2");
+    assert!(
+        out.contains(
+            r#"args: ["run","--standalone","--model","anyrouter/deepseek/deepseek-v4-flash","hi"]"#
+        ),
         "unexpected args:\n{out}"
     );
-        assert!(dry_run_args("1.4.3", "v1").contains(r#"args: ["run","hi"]"#));
-    }
+    let v1 = dry_run_args("1.4.3", "v1");
+    // v1 keeps --model ahead of `run` like v2, but without --standalone.
+    assert!(
+        v1.contains(r#"args: ["--model","anyrouter/deepseek/deepseek-v4-flash","run","hi"]"#),
+        "unexpected v1 args:\n{v1}"
+    );
 }
 
 fn dry_run_auto(tag: &str) -> String {

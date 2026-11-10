@@ -1724,6 +1724,18 @@ fn split_origin(url: &str) -> (&str, &str) {
 /// `OPENCODE_CONFIG_CONTENT` we inject never reaches it and OpenCode answers
 /// from its built-in provider. `--standalone` makes it start a private server
 /// that inherits our env. OpenCode 1.x has no service and rejects the flag.
+/// Remove `--model <catalog>` from `args` if present, returning the catalog.
+fn extract_model_arg(out: &mut Vec<String>) -> Option<String> {
+    let mp = out.iter().position(|a| a == "--model")?;
+    if mp + 1 >= out.len() || out[mp + 1].starts_with('-') {
+        return None;
+    }
+    let catalog = out[mp + 1].clone();
+    out.remove(mp + 1);
+    out.remove(mp);
+    Some(catalog)
+}
+
 pub fn opencode_standalone_args(args: &[String], major: Option<u32>) -> Vec<String> {
     let mut out = args.to_vec();
     if major.is_some_and(|m| m >= 2) {
@@ -1731,15 +1743,7 @@ pub fn opencode_standalone_args(args: &[String], major: Option<u32>) -> Vec<Stri
         // flags, so they must follow the `run` subcommand. `--model` is
         // injected by `model_args_for` ahead of the user args, so pull it
         // out and re-insert it next to `--standalone` after `run`.
-        let model_pair = out.iter().position(|a| a == "--model").and_then(|mp| {
-            (mp + 1 < out.len() && !out[mp + 1].starts_with('-'))
-                .then_some((mp, out[mp + 1].clone()))
-        });
-        let model = model_pair.as_ref().map(|(_, catalog)| catalog.clone());
-        if let Some((mp, _)) = model_pair {
-            out.remove(mp + 1);
-            out.remove(mp);
-        }
+        let model = extract_model_arg(&mut out);
         let run_pos = out.iter().position(|a| a == "run");
         match run_pos {
             Some(pos) => {
@@ -1766,6 +1770,9 @@ pub fn opencode_standalone_args(args: &[String], major: Option<u32>) -> Vec<Stri
             }
         }
     }
+    // v1 has no --standalone. --model is a `run` flag in v1 too, but the
+    // injected OPENCODE_CONFIG_CONTENT is already read by v1 without
+    // --standalone, so leaving args untouched works for both cases.
     out
 }
 
