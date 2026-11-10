@@ -42,7 +42,7 @@ chmod +x "$fake"
 
 bindir="${tmpdir}/bin"
 echo "ANYR_SETUP_BIN=${fake} ANYR_BIN_DIR=${bindir}"
-ANYR_SETUP_BIN="$fake" ANYR_BIN_DIR="$bindir" bash "$SETUP"
+ANYR_SETUP_BIN="$fake" ANYR_BIN_DIR="$bindir" bash "$SETUP" >"${tmpdir}/installer.log" 2>&1
 
 [ -x "${bindir}/anyr" ] || {
   echo "anyr not installed at ${bindir}/anyr" >&2
@@ -99,7 +99,7 @@ if ! env -u GH_TOKEN -u GITHUB_TOKEN \
   FAKE_CURL_LOG="${tmpdir}/curl.log" \
   ANYR_CURL="$FAKE_CURL" \
   ANYR_BIN_DIR="$empty_latest_bin" \
-  bash "$SETUP"; then
+  bash "$SETUP" >"${tmpdir}/stable-empty-latest.log" 2>&1; then
   echo "setup.sh failed on empty /latest fallback" >&2
   cat "${tmpdir}/curl.log" >&2 || true
   exit 1
@@ -130,12 +130,12 @@ python3 -c 'import sys; sys.exit(0 if open(sys.argv[1],"rb").read(4)==b"\x7fELF"
 token_bin="${tmpdir}/bin-token"
 mkdir -p "$token_bin"
 echo "setup.sh stable with GH_TOKEN uses authenticated API"
-env -u GITHUB_TOKEN \
+env -u GH_TOKEN -u GITHUB_TOKEN \
   GH_TOKEN="ghs_test_token" \
   FAKE_CURL_LOG="${tmpdir}/curl.log" \
   ANYR_CURL="$FAKE_CURL" \
   ANYR_BIN_DIR="$token_bin" \
-  bash "$SETUP"
+  bash "$SETUP" >"${tmpdir}/token.log" 2>&1
 [ -x "${token_bin}/anyr" ]
 if grep -q 'Authorization: Bearer ghs_test_token' "${tmpdir}/curl.log"; then
   :
@@ -161,7 +161,7 @@ env -u GH_TOKEN -u GITHUB_TOKEN \
   FAKE_CURL_LOG="${tmpdir}/curl.log" \
   ANYR_CURL="$FAKE_CURL" \
   ANYR_BIN_DIR="$beta_bin" \
-  bash "$SETUP"
+  bash "$SETUP" >"${tmpdir}/beta.log" 2>&1
 [ -x "${beta_bin}/anyr" ]
 if grep -q 'api.github.com' "${tmpdir}/curl.log"; then
   echo "beta without token must not call api.github.com:" >&2
