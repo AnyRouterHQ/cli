@@ -69,6 +69,13 @@ jobs:
             bin="target/${{ matrix.target }}/release/anyr.exe"
           fi
           strip "$bin" 2>/dev/null || true
+          # Apple Silicon kills (SIGKILL, no message) any binary whose code
+          # signature does not match its bytes. The linker ad-hoc signs, then
+          # strip rewrites the file and breaks that signature. Re-sign last.
+          if [ "$(uname -s)" = "Darwin" ]; then
+            codesign --force --sign - "$bin"
+            codesign --verify --verbose=2 "$bin"
+          fi
           test -s "$bin" || { echo "missing built binary $bin" >&2; exit 1; }
           cp "$bin" "${{ matrix.asset }}"
           test -s "${{ matrix.asset }}" || { echo "empty asset ${{ matrix.asset }}" >&2; exit 1; }

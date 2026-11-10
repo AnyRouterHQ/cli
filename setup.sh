@@ -153,6 +153,14 @@ install_bin() {
       xattr -d "$attr" "${BIN_DIR}/${BIN_NAME}" 2>/dev/null || true
     done
   fi
+  # Apple Silicon also SIGKILLs a binary whose code signature is missing or
+  # stale (strip after link breaks it). Re-sign ad hoc when verification fails.
+  if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
+    if ! codesign --verify "${BIN_DIR}/${BIN_NAME}" >/dev/null 2>&1; then
+      codesign --force --sign - "${BIN_DIR}/${BIN_NAME}" \
+        || die "codesign failed for ${BIN_DIR}/${BIN_NAME}"
+    fi
+  fi
   # Windows does not have Unix chmod or symlinks; Linux/Darwin do.
   if [ "$(uname -s)" != MSYS* ] && [ "$(uname -s)" != MINGW* ] && [ "$(uname -s)" != CYGWIN* ]; then
     chmod +x "${BIN_DIR}/${BIN_NAME}"
