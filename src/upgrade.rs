@@ -124,7 +124,11 @@ fn fetch_releases(
                 msg += "; ";
             }
             msg += &format!(
-                "Fell back to github.com/releases (not the REST API), which also failed: {html_err}"
+                "Fell back to github.com/releases (not the REST API), which also failed: {html_err}\n\n\
+                 Reinstall the latest binary from the project website; it replaces any local \
+                 broken copy and re-downloads the correct one:\n\
+                 \n\
+                 \x20 curl -fsSL https://anyrouter.dev/setup.sh | bash\n"
             );
             Err(msg)
         }
