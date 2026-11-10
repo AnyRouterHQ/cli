@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AnyRouter CLI installer. Downloads GitHub Release binaries (not npm).
 #   curl -fsSL https://raw.githubusercontent.com/AnyRouterHQ/cli/main/setup.sh | bash
-#   curl -fsSL https://anyrouter.dev/setup.sh | bash
+#   curl -fsSL https://anyrouter.dev/cli.sh | bash
 #   ANYR_CHANNEL=beta ./setup.sh --channel beta
 # Assets: https://github.com/AnyRouterHQ/cli/releases/download/<tag>/anyr-<os>-<arch>
 set -euo pipefail
@@ -141,6 +141,21 @@ write_otlp_telemetry_endpoint() {
   echo "Telemetry endpoint written to ${cfg}: ${TELEMETRY_OTLP_ENDPOINT}"
 }
 
+# Run the installed binary once: prints the version and proves it launches.
+# A signal kill (exit >= 128, e.g. macOS SIGKILL on a bad code signature) means
+# the install is broken, so fail loud; other failures only warn.
+report_version() {
+  local out status=0
+  out="$("${BIN_DIR}/${BIN_NAME}" --version 2>&1)" || status=$?
+  if [ "$status" -eq 0 ]; then
+    echo "Version: ${out}"
+  elif [ "$status" -ge 128 ] && [ "$status" -ne 126 ] && [ "$status" -ne 127 ]; then
+    die "installed ${BIN_DIR}/${BIN_NAME} was killed on launch (exit ${status}); the binary is unusable"
+  else
+    echo "cli.sh: warning: could not read the version from ${BIN_DIR}/${BIN_NAME} (exit ${status})" >&2
+  fi
+}
+
 install_bin() {
   local src="$1"
   [ -f "$src" ] || die "source is not a file: $src"
@@ -184,6 +199,7 @@ install_bin() {
       ;;
     *)
       echo "Symlink: ${BIN_DIR}/anyrouter"
+  report_version
       case ":${PATH}:" in
         *":${BIN_DIR}:"*) ;;
         *)

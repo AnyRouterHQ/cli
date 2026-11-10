@@ -128,7 +128,7 @@ fn fetch_releases(
                  Reinstall the latest binary from the project website; it replaces any local \
                  broken copy and re-downloads the correct one:\n\
                  \n\
-                 \x20 curl -fsSL https://anyrouter.dev/setup.sh | bash\n"
+                 \x20 curl -fsSL https://anyrouter.dev/cli.sh | bash\n"
             );
             Err(msg)
         }

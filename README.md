@@ -3,7 +3,7 @@
 Point any coding agent at AnyRouter. One key, every provider.
 
 ```bash
-curl -fsSL https://anyrouter.dev/setup.sh | bash
+curl -fsSL https://anyrouter.dev/cli.sh | bash
 ```
 
 `anyr` is the command line for [AnyRouter](https://anyrouter.dev). It is one
@@ -29,7 +29,7 @@ and presets, publishes pages, and serves your local models. This line is
 ## Install
 
 ```bash
-curl -fsSL https://anyrouter.dev/setup.sh | bash
+curl -fsSL https://anyrouter.dev/cli.sh | bash
 ```
 
 The installer downloads `anyr-<os>-<arch>` from

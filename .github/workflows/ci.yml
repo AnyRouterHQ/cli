@@ -421,7 +421,7 @@ jobs:
           test -s dist/checksums.txt || { echo "checksums.txt missing or empty"; exit 1; }
           test -n "$(ls -A dist)" || { echo "no binaries in artifacts"; exit 1; }
           SHORT="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          printf 'Beta from main (%s).\n\ncurl -fsSL https://anyrouter.dev/setup.sh | bash -s -- --channel beta\nchannel: beta\n' "$SHORT" > notes.md
+          printf 'Beta from main (%s).\n\ncurl -fsSL https://anyrouter.dev/cli.sh | bash -s -- --channel beta\nchannel: beta\n' "$SHORT" > notes.md
           gh release create "${TAG}" dist/* \
             --prerelease \
             --target "${GITHUB_SHA}" \

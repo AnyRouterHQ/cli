@@ -36,7 +36,7 @@ pub fn releases_http_error(status: u16, body: &str) -> String {
     let hint = if rate_limited {
         " Unauthenticated api.github.com requests are rate-limited from some networks. \
 Set GH_TOKEN or GITHUB_TOKEN (public-repo scope) and retry, or install with: \
-curl -fsSL https://anyrouter.dev/setup.sh | bash"
+curl -fsSL https://anyrouter.dev/cli.sh | bash"
     } else {
         ""
     };

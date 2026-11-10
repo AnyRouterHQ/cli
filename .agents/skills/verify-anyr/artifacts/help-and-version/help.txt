@@ -1,7 +1,7 @@
 anyr – point any coding agent at AnyRouter
 
 Start
-  $ curl -fsSL https://anyrouter.dev/setup.sh | bash
+  $ curl -fsSL https://anyrouter.dev/cli.sh | bash
   $ anyr auth login
   $ anyr claude
 

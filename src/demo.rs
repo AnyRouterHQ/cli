@@ -14,7 +14,7 @@ use crate::spawn::{
 use crate::VERSION;
 
 const DEMO_HINT: &str =
-    "\n(browser demo — install the native CLI: curl -fsSL https://anyrouter.dev/setup.sh | bash)\n";
+    "\n(browser demo — install the native CLI: curl -fsSL https://anyrouter.dev/cli.sh | bash)\n";
 
 pub fn run_demo(line: &str) -> String {
     let tokens = tokenize(line);
