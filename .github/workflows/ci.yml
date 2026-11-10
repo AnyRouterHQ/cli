@@ -217,8 +217,18 @@ jobs:
             bin="target/${{ matrix.target }}/release/anyr.exe"
           fi
           strip "$bin" 2>/dev/null || true
+          # strip invalidates the linker's ad-hoc signature; Apple Silicon then
+          # SIGKILLs the binary. Re-sign last.
+          if [ "$(uname -s)" = "Darwin" ]; then
+            codesign --force --sign - "$bin"
+          fi
           cp "$bin" "${{ matrix.asset }}"
           ls -la "${{ matrix.asset }}"
+
+      # Execute the exact file that will be published, on its own platform.
+      - name: smoke the packaged binary
+        shell: bash
+        run: bash scripts/smoke-binary.sh "${{ matrix.asset }}"
 
       - name: bench size and startup
         shell: bash
@@ -430,11 +440,16 @@ jobs:
 
   # The installer and `anyr update` scrape github.com/releases. A repo
   # transfer once made both find zero tags, and nothing in CI noticed. This
-  # runs the committed setup.sh against the live release just published.
+  # runs the committed setup.sh against the live release just published, on Linux and
+  # Apple Silicon (a killed macOS binary once shipped with every check green).
   install-smoke:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [beta]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 

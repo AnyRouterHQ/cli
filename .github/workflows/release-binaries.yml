@@ -80,6 +80,20 @@ jobs:
           cp "$bin" "${{ matrix.asset }}"
           test -s "${{ matrix.asset }}" || { echo "empty asset ${{ matrix.asset }}" >&2; exit 1; }
 
+      # Inlined (not scripts/smoke-binary.sh): a workflow_dispatch rebuild of an
+      # older tag checks out source that predates that script.
+      - name: smoke the packaged binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="./${{ matrix.asset }}"
+          chmod +x "$f"
+          if [ "$(uname -s)" = "Darwin" ]; then
+            codesign --verify --strict --verbose=2 "$f"
+          fi
+          "$f" --version
+          "$f" --help >/dev/null
+
       - name: bench
         shell: bash
         run: |

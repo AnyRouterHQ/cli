@@ -1,0 +1,45 @@
+name: install-live
+
+# Installs anyr the way a user does, from the public URL, on every platform we
+# ship, and checks it is the latest stable release. Catches a broken or stale
+# installer, a missing release asset, or a binary the OS refuses to run.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: install from https://anyrouter.dev/cli.sh
+        run: |
+          set -euo pipefail
+          export ANYR_BIN_DIR="$RUNNER_TEMP/bin" HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          curl -fsSL https://anyrouter.dev/cli.sh | bash
+
+      - name: installed version is the latest stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/home"
+          WANT="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          WANT="${WANT#v}"
+          GOT="$("$RUNNER_TEMP/bin/anyr" --version)"
+          echo "want ${WANT}, got ${GOT}"
+          case "$GOT" in *"${WANT}"*) ;; *) echo "installed version is not the latest stable release"; exit 1;; esac
+          "$RUNNER_TEMP/bin/anyr" --help >/dev/null
+
+      - name: legacy /setup.sh still redirects to the installer
+        run: |
+          set -euo pipefail
+          curl -fsSL https://anyrouter.dev/setup.sh | head -1 | grep -q '^#!/usr/bin/env bash'
