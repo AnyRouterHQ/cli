@@ -55,8 +55,30 @@ Assets: anyr-linux-x86_64 anyr-linux-arm64 anyr-darwin-x86_64 anyr-darwin-arm64 
 EOF
 }
 
+# Output: colour and glyphs only on a terminal; NO_COLOR and TERM=dumb opt out.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+  C_BOLD=$'\033[1m' C_DIM=$'\033[2m' C_GREEN=$'\033[32m' C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m' C_OFF=$'\033[0m' TTY=1
+else
+  C_BOLD="" C_DIM="" C_GREEN="" C_YELLOW="" C_RED="" C_OFF="" TTY=0
+fi
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *UTF-8* | *utf-8* | *UTF8* | *utf8*) G_OK="✓" G_WARN="!" G_FAIL="✗" G_GO="→" ;;
+  *) G_OK="+" G_WARN="!" G_FAIL="x" G_GO=">" ;;
+esac
+
+header() { printf '\n  %sanyr%s  AnyRouter CLI installer\n\n' "$C_BOLD" "$C_OFF"; }
+step() { printf '  %s%s%s %s%-11s%s %s\n' "$C_GREEN" "$G_OK" "$C_OFF" "$C_BOLD" "$1" "$C_OFF" "$2"; }
+warn() { printf '  %s%s%s %s%-11s%s %s\n' "$C_YELLOW" "$G_WARN" "$C_OFF" "$C_BOLD" "$1" "$C_OFF" "$2" >&2; }
+note() { printf '  %s%s%s\n' "$C_DIM" "$*" "$C_OFF"; }
+# One in-place status line while a slow step runs; a no-op when piped.
+working() { [ "$TTY" = 1 ] && printf '  %s%s%s %s%s%s\r' "$C_DIM" "$G_GO" "$C_OFF" "$C_DIM" "$*" "$C_OFF" || true; }
+done_working() { [ "$TTY" = 1 ] && printf '\033[2K\r' || true; }
+tilde() { case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }
+
 die() {
-  echo "setup.sh: $*" >&2
+  done_working
+  printf '\n  %s%s %s%s\n\n' "$C_RED" "$G_FAIL" "$*" "$C_OFF" >&2
   exit 1
 }
 
@@ -138,7 +160,7 @@ write_otlp_telemetry_endpoint() {
     printf 'active_profile: default\ntelemetry_endpoint: %s\n' "$TELEMETRY_OTLP_ENDPOINT" > "$cfg"
     chmod 600 "$cfg"
   fi
-  echo "Telemetry endpoint written to ${cfg}: ${TELEMETRY_OTLP_ENDPOINT}"
+  step "Telemetry" "$(tilde "$cfg") -> ${TELEMETRY_OTLP_ENDPOINT}"
 }
 
 # Run the installed binary once: prints the version and proves it launches.
@@ -148,76 +170,78 @@ report_version() {
   local out status=0
   out="$("${BIN_DIR}/${BIN_NAME}" --version 2>&1)" || status=$?
   if [ "$status" -eq 0 ]; then
-    echo "Version: ${out}"
+    step "Version" "$out"
   elif [ "$status" -ge 128 ] && [ "$status" -ne 126 ] && [ "$status" -ne 127 ]; then
-    die "installed ${BIN_DIR}/${BIN_NAME} was killed on launch (exit ${status}); the binary is unusable"
+    die "$(tilde "${BIN_DIR}/${BIN_NAME}") was killed on launch (exit ${status}); the binary is unusable.
+    Remove it and run the installer again:  rm -f $(tilde "${BIN_DIR}/${BIN_NAME}")"
   else
-    echo "cli.sh: warning: could not read the version from ${BIN_DIR}/${BIN_NAME} (exit ${status})" >&2
+    warn "Version" "could not read the version from $(tilde "${BIN_DIR}/${BIN_NAME}") (exit ${status})"
   fi
 }
 
 install_bin() {
-  local src="$1"
+  local src="$1" dest="${BIN_DIR}/${BIN_NAME}"
   [ -f "$src" ] || die "source is not a file: $src"
   mkdir -p "$BIN_DIR"
-  cp "$src" "${BIN_DIR}/${BIN_NAME}"
+  # Stage next to the target and rename into place. Overwriting an existing
+  # executable in place keeps its inode, and macOS can keep judging the new
+  # bytes by the old file's cached code signature (SIGKILL on first launch).
+  # A rename gives every install a fresh inode.
+  staged="${BIN_DIR}/.${BIN_NAME}.new.$$" # global: the EXIT trap reads it
+  trap 'rm -f "$staged" "${tmp:-}"' EXIT
+  cp "$src" "$staged"
   # macOS Gatekeeper can SIGKILL a freshly curl'd binary before it starts; that
   # is what "error: killed" means. Clear the quarantine xattr if present.
   if command -v xattr >/dev/null 2>&1; then
     for attr in com.apple.quarantine com.apple.security; do
-      xattr -d "$attr" "${BIN_DIR}/${BIN_NAME}" 2>/dev/null || true
+      xattr -d "$attr" "$staged" 2>/dev/null || true
     done
   fi
   # Apple Silicon also SIGKILLs a binary whose code signature is missing or
-  # stale (strip after link breaks it). Re-sign ad hoc when verification fails.
+  # stale. Re-sign ad hoc when verification fails.
   if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
-    if ! codesign --verify "${BIN_DIR}/${BIN_NAME}" >/dev/null 2>&1; then
-      codesign --force --sign - "${BIN_DIR}/${BIN_NAME}" \
-        || die "codesign failed for ${BIN_DIR}/${BIN_NAME}"
+    if ! codesign --verify "$staged" >/dev/null 2>&1; then
+      codesign --force --sign - "$staged" || die "codesign failed for ${dest}"
     fi
   fi
-  # Windows does not have Unix chmod or symlinks; Linux/Darwin do.
-  if [ "$(uname -s)" != MSYS* ] && [ "$(uname -s)" != MINGW* ] && [ "$(uname -s)" != CYGWIN* ]; then
-    chmod +x "${BIN_DIR}/${BIN_NAME}"
-    ln -sfn "$BIN_NAME" "${BIN_DIR}/anyrouter"
-    # Older installers also linked `ar`, which shadows the system archiver and
-    # breaks C/Rust builds. Remove it only when it points at anyr.
-    if [ -L "${BIN_DIR}/ar" ]; then
-      case "$(readlink "${BIN_DIR}/ar")" in
-        anyr | */anyr | anyrouter | */anyrouter)
-          rm -f "${BIN_DIR}/ar"
-          echo "Removed ${BIN_DIR}/ar (it shadowed the system ar archiver)"
-          ;;
-      esac
-    fi
-  fi
-  echo "Installed ${BIN_DIR}/${BIN_NAME}"
+  case "$(uname -s)" in MSYS* | MINGW* | CYGWIN*) ;; *) chmod +x "$staged" ;; esac
+  mv -f "$staged" "$dest"
+  step "Installed" "$(tilde "$dest")"
   case "$(uname -s)" in
-    MSYS*|MINGW*|CYGWIN*)
-      echo "Add ${BIN_DIR} to your PATH in the Windows environment variables, or:"
-      echo "  export PATH=\"${BIN_DIR}:\$PATH\""
-      ;;
+    MSYS* | MINGW* | CYGWIN*) ;;
     *)
-      echo "Symlink: ${BIN_DIR}/anyrouter"
-  report_version
-      case ":${PATH}:" in
-        *":${BIN_DIR}:"*) ;;
-        *)
-          echo "Add ${BIN_DIR} to PATH:"
-          echo "  export PATH=\"${BIN_DIR}:\$PATH\""
-          ;;
-      esac
+      ln -sfn "$BIN_NAME" "${BIN_DIR}/anyrouter"
+      step "Linked" "anyrouter ${G_GO} ${BIN_NAME}"
+      # Older installers also linked `ar`, which shadows the system archiver and
+      # breaks C/Rust builds. Remove it only when it points at anyr.
+      if [ -L "${BIN_DIR}/ar" ]; then
+        case "$(readlink "${BIN_DIR}/ar")" in
+          anyr | */anyr | anyrouter | */anyrouter)
+            rm -f "${BIN_DIR}/ar"
+            step "Removed" "$(tilde "${BIN_DIR}/ar") (it shadowed the system ar archiver)"
+            ;;
+        esac
+      fi
       ;;
   esac
-  echo "Next:"
-  echo "  ${BIN_NAME} auth login"
-  echo "  ${BIN_NAME} claude"
+  report_version
+  case ":${PATH}:" in
+    *":${BIN_DIR}:"*) ;;
+    *)
+      warn "PATH" "$(tilde "$BIN_DIR") is not on your PATH. Add it:"
+      printf '                %sexport PATH="%s:$PATH"%s\n' "$C_DIM" "$(tilde "$BIN_DIR")" "$C_OFF" >&2
+      ;;
+  esac
+  printf '\n  %sNext%s\n' "$C_BOLD" "$C_OFF"
+  printf '    %s%-16s%s sign in\n' "$C_BOLD" "${BIN_NAME} auth login" "$C_OFF"
+  printf '    %s%-16s%s launch Claude Code through AnyRouter\n\n' "$C_BOLD" "${BIN_NAME} claude" "$C_OFF"
 }
 
 # Local test mode: copy ANYR_SETUP_BIN, never hit the network.
 if [ -n "${ANYR_SETUP_BIN:-}" ]; then
   [ -f "$ANYR_SETUP_BIN" ] || die "ANYR_SETUP_BIN is not a file: $ANYR_SETUP_BIN"
-  echo "ANYR_SETUP_BIN=${ANYR_SETUP_BIN} (local, no download)"
+  header
+  note "ANYR_SETUP_BIN=${ANYR_SETUP_BIN} (local, no download)"
   install_bin "$ANYR_SETUP_BIN"
   write_otlp_telemetry_endpoint
   exit 0
@@ -389,7 +413,7 @@ EOF
 $tags
 EOF
 
-  echo "setup.sh: GitHub /releases/latest has no ${asset}; using newest release that has binaries" >&2
+  warn "Release" "GitHub /releases/latest has no ${asset}; using the newest release that has binaries"
   while IFS= read -r tag; do
     [ -n "$tag" ] || continue
     url="$(download_url_for_tag "$tag")"
@@ -418,7 +442,7 @@ resolve_download_url() {
       printf '%s' "$(download_url_for_tag "$tag")"
       return 0
     fi
-    echo "setup.sh: authenticated GitHub API failed; listing github.com/releases instead" >&2
+    warn "Release" "authenticated GitHub API failed; listing github.com/releases instead"
   fi
 
   if [ "$CHANNEL" = "stable" ]; then
@@ -434,18 +458,29 @@ resolve_download_url() {
   printf '%s' "$(download_url_for_tag "$tag")"
 }
 
-echo "channel=${CHANNEL} os=${os} arch=${arch}"
+header
+if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  warn "sudo" "not needed: the files will be owned by root. Run without sudo."
+fi
+step "Detected" "${os}/${arch} ${C_DIM}·${C_OFF} ${CHANNEL} channel"
+working "Finding the release"
 url="$(resolve_download_url)"
-echo "Downloading ${url}"
+done_working
+rel_tag="$(printf '%s' "$url" | sed -n 's#.*/releases/download/\(v[^/]*\)/.*#\1#p')"
+[ -z "$rel_tag" ] || step "Release" "$rel_tag"
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
+working "Downloading ${asset}"
 if ! curl_ua -fsSL "$url" -o "$tmp"; then
   die "download failed: $url"
 fi
+done_working
 if [ ! -s "$tmp" ]; then
   die "download was empty: $url"
 fi
+bytes="$(wc -c <"$tmp" | tr -d ' ')"
+step "Downloaded" "${asset} ${C_DIM}($(awk -v b="$bytes" 'BEGIN { if (b >= 1048576) printf "%.1f MB", b / 1048576; else printf "%.0f KB", b / 1024 }'))${C_OFF}"
 # GitHub 404 pages are HTML; release assets are ELF / Mach-O.
 if head -c 16 "$tmp" | grep -q '<'; then
   die "download did not look like a binary (got HTML?): $url"
@@ -487,7 +522,7 @@ verify_checksum() {
   if [ "$code" != "200" ]; then
     rm -f "$sums"
     if [ "$code" = "404" ] && checksums_optional "$url"; then
-      echo "setup.sh: warning: legacy release has no checksums.txt; installing unverified" >&2
+      warn "Verified" "legacy release has no checksums.txt; installing unverified"
       return 0
     fi
     die "could not fetch checksums.txt (HTTP ${code:-none}); refusing to install unverified binary"
@@ -497,7 +532,7 @@ verify_checksum() {
   [ -n "$expected" ] || die "checksums.txt has no entry for ${asset}; refusing to install"
   actual="$(sha256_of "$file")" || die "need sha256sum or shasum to verify the download"
   [ "$actual" = "$expected" ] || die "checksum mismatch for ${asset} (expected ${expected}, got ${actual}); refusing to install"
-  echo "Verified sha256 ${actual}"
+  step "Verified" "sha256 ${actual:0:8}…${actual: -8}"
 }
 
 verify_checksum "$url" "$tmp"

@@ -463,10 +463,14 @@ jobs:
           WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
           export ANYR_BIN_DIR="$RUNNER_TEMP/bin" HOME="$RUNNER_TEMP/home"
           mkdir -p "$HOME"
-          bash setup.sh --channel beta
-          GOT="$("$ANYR_BIN_DIR/anyr" --version)"
-          echo "want ${WANT}, got ${GOT}"
-          case "$GOT" in "${WANT}"*) ;; *) echo "installed version is not the one just published"; exit 1;; esac
+          # Twice into the same dir: the second run replaces a binary that has
+          # already launched, the path where macOS can keep a stale signature.
+          for run in 1 2; do
+            bash setup.sh --channel beta
+            GOT="$("$ANYR_BIN_DIR/anyr" --version)"
+            echo "run ${run}: want ${WANT}, got ${GOT}"
+            case "$GOT" in "${WANT}"*) ;; *) echo "installed version is not the one just published"; exit 1;; esac
+          done
 
       - name: anyr update --check finds the same release
         run: |

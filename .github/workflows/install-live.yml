@@ -24,6 +24,10 @@ jobs:
           set -euo pipefail
           export ANYR_BIN_DIR="$RUNNER_TEMP/bin" HOME="$RUNNER_TEMP/home"
           mkdir -p "$HOME"
+          # Twice into the same dir: the second run replaces a binary that has
+          # already launched, the path where macOS can keep a stale signature.
+          curl -fsSL https://anyrouter.dev/cli.sh | bash
+          "$ANYR_BIN_DIR/anyr" --version
           curl -fsSL https://anyrouter.dev/cli.sh | bash
 
       - name: installed version is the latest stable release
