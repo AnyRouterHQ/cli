@@ -60,7 +60,8 @@ ANYR_SETUP_BIN="$fake" ANYR_BIN_DIR="$bindir" bash "$SETUP" >"${tmpdir}/installe
 
 # An old `ar -> anyr` link is removed on reinstall; an unrelated ar is kept.
 ln -sfn anyr "${bindir}/ar"
-ANYR_SETUP_BIN="$fake" ANYR_BIN_DIR="$bindir" bash "$SETUP" | grep -q 'Removed .*/ar'
+ANYR_SETUP_BIN="$fake" ANYR_BIN_DIR="$bindir" bash "$SETUP" >"${tmpdir}/ar-remove.log" 2>&1
+grep -q 'Removed .*/ar' "${tmpdir}/ar-remove.log"
 [ ! -L "${bindir}/ar" ] || {
   echo "stale ar -> anyr symlink was not removed" >&2
   exit 1
