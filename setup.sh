@@ -67,7 +67,7 @@ case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
   *) G_OK="+" G_WARN="!" G_FAIL="x" G_GO=">" ;;
 esac
 
-header() { printf '\n  %sanyr%s  AnyRouter CLI installer\n\n' "$C_BOLD" "$C_OFF"; }
+header() { printf '  %sanyr%s  AnyRouter CLI installer\n\n' "$C_BOLD" "$C_OFF"; }
 step() { printf '  %s%s%s %s%-11s%s %s\n' "$C_GREEN" "$G_OK" "$C_OFF" "$C_BOLD" "$1" "$C_OFF" "$2"; }
 warn() { printf '  %s%s%s %s%-11s%s %s\n' "$C_YELLOW" "$G_WARN" "$C_OFF" "$C_BOLD" "$1" "$C_OFF" "$2" >&2; }
 note() { printf '  %s%s%s\n' "$C_DIM" "$*" "$C_OFF"; }
@@ -234,7 +234,7 @@ install_bin() {
   esac
   printf '\n  %sNext%s\n' "$C_BOLD" "$C_OFF"
   printf '    %s%-16s%s sign in\n' "$C_BOLD" "${BIN_NAME} auth login" "$C_OFF"
-  printf '    %s%-16s%s launch Claude Code through AnyRouter\n\n' "$C_BOLD" "${BIN_NAME} claude" "$C_OFF"
+  printf '    %s%-16s%s launch Claude Code through AnyRouter\n' "$C_BOLD" "${BIN_NAME} claude" "$C_OFF"
 }
 
 # Local test mode: copy ANYR_SETUP_BIN, never hit the network.
