@@ -23,6 +23,18 @@ pub const START_USING: &str = "Run anyr to start using the new version.";
 const DEFAULT_INTERVAL_MS: u64 = 80;
 const DEFAULT_MIN_TICKS: usize = 4;
 
+/// Reports the current terminal width in columns; re-read on every paint.
+pub type WidthFn = Arc<dyn Fn() -> usize + Send + Sync>;
+
+fn default_width() -> WidthFn {
+    Arc::new(|| term::width().unwrap_or(80))
+}
+
+/// Clip a painted line to one column short of `width` so it never wraps.
+fn clip(line: &str, width: usize) -> String {
+    term::truncate_ansi(line, width.saturating_sub(1).max(1))
+}
+
 pub fn frame(index: usize) -> &'static str {
     FRAMES[index % FRAMES.len()]
 }
@@ -83,6 +95,7 @@ pub struct Spinner {
     interval: Duration,
     min_ticks: usize,
     finished: bool,
+    width: WidthFn,
 }
 
 impl Spinner {
@@ -103,6 +116,17 @@ impl Spinner {
         interval: Duration,
         min_ticks: usize,
     ) -> Self {
+        Self::start_on_width(writer, tty, message, interval, min_ticks, default_width())
+    }
+
+    pub fn start_on_width<W: Write + Send + 'static>(
+        writer: W,
+        tty: bool,
+        message: impl Into<String>,
+        interval: Duration,
+        min_ticks: usize,
+        width: WidthFn,
+    ) -> Self {
         let message = message.into();
         let out: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(writer)));
         let stop = Arc::new(AtomicBool::new(false));
@@ -116,13 +140,14 @@ impl Spinner {
                 let pause_t = Arc::clone(&pause);
                 let ticks_t = Arc::clone(&ticks);
                 let msg = message.clone();
+                let width_t = Arc::clone(&width);
                 let interval = if interval.is_zero() {
                     Duration::from_millis(DEFAULT_INTERVAL_MS)
                 } else {
                     interval
                 };
                 Some(thread::spawn(move || {
-                    tick_loop(out_t, stop_t, pause_t, ticks_t, msg, interval);
+                    tick_loop(out_t, stop_t, pause_t, ticks_t, msg, interval, width_t);
                 }))
             }
             #[cfg(target_arch = "wasm32")]
@@ -150,6 +175,7 @@ impl Spinner {
             interval,
             min_ticks,
             finished: false,
+            width,
         };
         ACTIVE_PAUSE.with(|slot| {
             *slot.borrow_mut() = Some(Arc::clone(&spinner.pause));
@@ -199,7 +225,8 @@ impl Spinner {
         self.finished = true;
         let mark = paint_ok_mark();
         let body = if self.tty {
-            format!("\r{mark} {message}\x1b[K\n")
+            let line = clip(&format!("{mark} {message}"), (self.width)());
+            format!("\r\x1b[2K{line}\n")
         } else {
             format!("{mark} {message}\n")
         };
@@ -279,6 +306,7 @@ fn tick_loop(
     ticks: Arc<AtomicUsize>,
     message: String,
     interval: Duration,
+    width: WidthFn,
 ) {
     let mut index = 0usize;
     while !stop.load(Ordering::Relaxed) {
@@ -287,8 +315,8 @@ fn tick_loop(
             continue;
         }
         let glyph = paint_glyph(frame(index));
-        let line = format!("\r{glyph} {message}\x1b[K");
-        lock_write(&out, line.as_bytes());
+        let line = clip(&format!("{glyph} {message}"), width());
+        lock_write(&out, format!("\r\x1b[2K{line}").as_bytes());
         ticks.fetch_add(1, Ordering::Relaxed);
         index = index.wrapping_add(1);
         let until = Instant::now() + interval;
@@ -315,6 +343,38 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn long_message_is_clipped_so_frames_never_wrap() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let cols = 30;
+        let spinner = Spinner::start_on_width(
+            SharedBuf(Arc::clone(&buf)),
+            true,
+            "Updating v0.1.44-beta.833 -> v0.1.44-beta.837 (beta channel)",
+            Duration::from_millis(10),
+            5,
+            Arc::new(move || cols),
+        );
+        spinner.succeed("Updated to v0.1.44-beta.837 from the beta channel today");
+        let text = String::from_utf8_lossy(&buf.lock().unwrap()).into_owned();
+        let body = text.split(START_USING).next().unwrap();
+        let frames: Vec<&str> = body.split('\r').filter(|f| !f.is_empty()).collect();
+        assert!(frames.len() >= 5, "expected several frames: {text:?}");
+        for f in &frames {
+            let visible = term::strip_ansi(f.trim_end_matches('\n'));
+            let visible = visible.trim_end_matches('\n');
+            assert!(
+                term::text_width(visible) < cols,
+                "frame wider than terminal: {f:?}"
+            );
+        }
+        assert!(frames.iter().all(|f| f.starts_with("\x1b[2K")), "{text:?}");
+        assert!(
+            !body.trim_end().contains('\n'),
+            "no newline before the final line: {text:?}"
+        );
     }
 
     #[test]
