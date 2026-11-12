@@ -389,3 +389,22 @@ fn providers_lists_the_public_catalog_with_badges() {
     assert!(out.contains("openai") && out.contains("ready"), "{out}");
     assert!(out.contains("groq"), "{out}");
 }
+
+#[test]
+fn rm_if_exists_of_a_missing_key_is_success() {
+    // WHY: a cleanup script must be safe to rerun; "already gone" is done.
+    for reply in [
+        (200, r#"{"deleted":false}"#.to_string()),
+        (404, r#"{"error":{"message":"no key"}}"#.to_string()),
+    ] {
+        let (base, _rx) = serve(vec![reply.clone()]);
+        let (code, out, err) = run(
+            anyr(&base),
+            &["byok", "rm", "openai", "--yes", "--if-exists", "--json"],
+            None,
+        );
+        assert_eq!(code, 0, "{reply:?}: {out}{err}");
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["deleted"], false, "{reply:?}");
+    }
+}

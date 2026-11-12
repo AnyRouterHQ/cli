@@ -623,14 +623,20 @@ Usage:
   {bin} keys list [--json]
   {bin} keys create [name] [--limit USD] [--reset daily|weekly|monthly]
                         [--endpoints chat,embeddings,...] [--expires 30d] [--quiet]
-                        [--agent <agent>]
+                        [--agent <agent>] [--name N --if-missing]
   {bin} keys set --agent <agent> -
   {bin} keys unset --agent <agent>
   {bin} keys show <hash> [--json]
   {bin} keys update <hash> [--limit USD] [--reset ...] [--endpoints ...] [--expires 30d]
                            [--disable|--enable]
   {bin} keys audit [--json]
-  {bin} keys revoke <last4|id|hash> [--yes]
+  {bin} keys revoke <last4|id|hash> [--yes] [--if-exists]
+
+Idempotent scripts: `keys create --name N --if-missing` prints the existing
+active key named N (metadata, never the secret; created: false) instead of
+minting another. `--if-exists` on revoke (and on `byok rm`, `presets rm`,
+`artifact rm`, `apps rm`) exits 0 with deleted: false when the target is
+already gone.
 
 Scoped keys for CI: `--limit` caps spend in USD, `--reset` sets its window,
 `--endpoints` restricts the key to named endpoints (chat covers chat,

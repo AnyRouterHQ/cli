@@ -345,3 +345,19 @@ fn preset_with_model_is_rejected_before_anything_runs() {
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("cannot be combined"), "{err}");
 }
+
+#[test]
+fn rm_if_exists_of_a_missing_preset_is_success_and_without_it_exit_3() {
+    let (base, _rx) = serve(vec![(404, r#"{"error":{"message":"no preset"}}"#.into())]);
+    let (code, out, err) = managed(
+        &base,
+        &["presets", "rm", "gone", "--yes", "--if-exists", "--json"],
+        "rmgone",
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["deleted"], false);
+    let (base, _rx) = serve(vec![(404, r#"{"error":{"message":"no preset"}}"#.into())]);
+    let (code, _, err) = managed(&base, &["presets", "rm", "gone", "--yes"], "rmgone3");
+    assert_eq!(code, 3, "{err}");
+}

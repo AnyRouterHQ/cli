@@ -199,11 +199,20 @@ fn run_rm(
     confirm(parsed, &format!("Delete the saved {provider} key?"))?;
     let ctx = mgmt_ctx(parsed, env)?;
     let path = format!("/v1/auth/byok/{}", crate::api::encode(provider));
-    let res = send(&ctx, "DELETE", &path, None, true)?;
+    let res = match send(&ctx, "DELETE", &path, None, true) {
+        Err(e) if crate::api::absent_ok(parsed, &e, "provider", provider) => return Ok(0),
+        other => other?,
+    };
+    // The server answers `{"deleted": false}` when no key was saved.
+    let missing = res.get("deleted").and_then(Value::as_bool) == Some(false);
+    let not_found = crate::exit::tag(crate::exit::NOT_FOUND, "");
+    if missing && crate::api::absent_ok(parsed, &not_found, "provider", provider) {
+        return Ok(0);
+    }
     if ctx.json {
         crate::cmd::view::print_json(&res);
     }
-    if res.get("deleted").and_then(Value::as_bool) == Some(false) {
+    if missing {
         eprintln!("{} no saved key for {provider}", term::err("error:"));
         return Ok(1);
     }

@@ -376,7 +376,10 @@ pub(crate) fn run_presets(
         _ => {
             let slug = slug()?;
             confirm(parsed, &format!("Delete preset {slug}?"))?;
-            let out = send(&mctx, "DELETE", &path_for(slug), None, true)?;
+            let out = match send(&mctx, "DELETE", &path_for(slug), None, true) {
+                Err(e) if crate::api::absent_ok(parsed, &e, "preset", slug) => return Ok(0),
+                other => other?,
+            };
             if mctx.json {
                 print_json(&out);
             } else {

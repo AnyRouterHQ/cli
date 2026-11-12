@@ -30,7 +30,15 @@ pub const PUBLISH_FLAGS: &[&str] = &[
     "dry-run",
     "light",
 ];
-pub const APPS_FLAGS: &[&str] = &["profile", "base-url", "config", "key", "json", "yes"];
+pub const APPS_FLAGS: &[&str] = &[
+    "profile",
+    "base-url",
+    "config",
+    "key",
+    "json",
+    "yes",
+    "if-exists",
+];
 
 pub const APPS_VERBS: &[(&str, &str)] = &[
     (
@@ -552,14 +560,24 @@ fn apps_inner(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32
                 parsed,
                 &format!("Delete {app}/{id}? This cannot be undone."),
             )?;
-            match call(
-                &ctx,
-                "DELETE",
-                &format!("{base}/submissions/{id}"),
-                None,
-                &[],
-                true,
-            )? {
+            let path = format!("{base}/submissions/{id}");
+            if parsed.flag_true("if-exists") {
+                // One DELETE; a 404 is success under --if-exists.
+                let key = ctx.key.as_deref().ok_or_else(no_key_error)?;
+                let (status, text) = request(&ctx, "DELETE", &path, None, Some(key))?;
+                let tagged = crate::exit::tag(crate::exit::for_status(status), "");
+                if crate::api::absent_ok(parsed, &tagged, "id", id) {
+                    return Ok(0);
+                }
+                if !(200..300).contains(&status) {
+                    let (msg, code) = failure(status, &text, &format!("DELETE {path}"));
+                    crate::exit::print(code, &msg);
+                    return Ok(code);
+                }
+                eprintln!("deleted {app}/{id}");
+                return Ok(0);
+            }
+            match call(&ctx, "DELETE", &path, None, &[], true)? {
                 Ok(_) => {
                     eprintln!("deleted {app}/{id}");
                     Ok(0)

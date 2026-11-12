@@ -1115,3 +1115,38 @@ fn rejected_blob_after_a_mid_upload_edit_reports_the_change() {
     assert_eq!(code, 1, "{err}");
     assert!(err.contains("a.css changed while publishing"), "{err}");
 }
+
+#[test]
+fn rm_if_exists_of_a_missing_artifact_is_success() {
+    let dir = tmp("rmgone");
+    let (base, _seen) = serve(vec![(404, r#"{"error":{"message":"not found"}}"#.into())]);
+    let args = [
+        "artifact",
+        "rm",
+        "abc123",
+        "--yes",
+        "--if-exists",
+        "--json",
+        "--base-url",
+        &base,
+        "--key",
+        "sk-ar-test",
+    ];
+    let (code, out, err) = anyr(&dir, &args);
+    assert_eq!(code, 0, "{out}{err}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["deleted"], false);
+    let (base, _seen) = serve(vec![(404, r#"{"error":{"message":"not found"}}"#.into())]);
+    let args = [
+        "artifact",
+        "rm",
+        "abc123",
+        "--yes",
+        "--base-url",
+        &base,
+        "--key",
+        "sk-ar-test",
+    ];
+    let (code, _, err) = anyr(&dir, &args);
+    assert_eq!(code, 3, "{err}");
+}

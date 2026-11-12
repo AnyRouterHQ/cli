@@ -40,6 +40,7 @@ pub const FLAGS: &[&str] = &[
     "no-show-author",
     "owner-data",
     "no-owner-data",
+    "if-exists",
 ];
 
 pub const VERBS: &[(&str, &str)] = &[
@@ -467,7 +468,13 @@ fn remove(ctx: &Ctx, parsed: &ParsedArgs, id: &str) -> Res<()> {
         &format!("Delete artifact {id}? Its URL stops working."),
     )
     .map_err(|e| confirm_fail(&e))?;
-    call(ctx, "DELETE", &format!("/v1/artifacts/{id}"), None)?;
+    if let Err(f) = call(ctx, "DELETE", &format!("/v1/artifacts/{id}"), None) {
+        let tagged = crate::exit::tag(f.code, &f.message);
+        if crate::api::absent_ok(parsed, &tagged, "id", &id) {
+            return Ok(());
+        }
+        return Err(f);
+    }
     if ctx.json {
         println!("{}", json!({ "id": id, "deleted": true }));
     } else {

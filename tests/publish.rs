@@ -543,3 +543,23 @@ fn light_without_a_page_is_a_usage_error() {
         "{err}"
     );
 }
+
+#[test]
+fn apps_rm_if_exists_treats_404_as_done_and_deletes_once_otherwise() {
+    let (base, rx) = serve(vec![(404, r#"{"error":{"message":"gone"}}"#)]);
+    let cmd = cli(
+        &base,
+        &["apps", "rm", "demo", "k1", "--yes", "--if-exists", "--json"],
+    );
+    let (code, out, err) = run(cmd);
+    assert_eq!(code, 0, "{out}{err}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["deleted"], false);
+    assert!(rx.recv().unwrap().starts_with("DELETE "));
+    let (base, rx) = serve(vec![(200, "{}")]);
+    let cmd = cli(&base, &["apps", "rm", "demo", "k1", "--yes", "--if-exists"]);
+    let (code, _, err) = run(cmd);
+    assert_eq!(code, 0, "{err}");
+    assert!(rx.recv().unwrap().starts_with("DELETE "));
+    assert!(rx.try_recv().is_err(), "one DELETE only");
+}

@@ -196,3 +196,80 @@ fn ls_and_rm_are_hidden_aliases_of_list_and_revoke() {
     let (code, _, err) = run(&base, &["keys", "rm", "zzz", "--yes"], None);
     assert_eq!(code, 3, "an unknown hash is not found: {err}");
 }
+
+#[test]
+fn create_if_missing_returns_the_existing_key_without_minting() {
+    // WHY: an agent re-running setup must not mint a second key per run, and
+    // must never get a secret back for a key that already exists.
+    let (base, rx) = serve(vec![(200, LIST.into())]);
+    let (code, out, err) = run(
+        &base,
+        &[
+            "keys",
+            "create",
+            "--name",
+            "ci-bot",
+            "--if-missing",
+            "--json",
+        ],
+        None,
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["created"], false);
+    assert_eq!(v["hash"], "abc123def456");
+    assert!(
+        v.get("key").is_none(),
+        "no secret for an existing key: {out}"
+    );
+    assert_eq!(rx.recv().unwrap().method, "GET");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(300)).is_err(),
+        "nothing created"
+    );
+}
+
+#[test]
+fn create_if_missing_creates_when_no_active_key_has_the_name() {
+    let disabled = r#"{"data":[{"hash":"abc123def456","name":"ci-bot","label":"sk-ar-v1-abc","disabled":true}]}"#;
+    let (base, rx) = serve(vec![(200, disabled.into()), created()]);
+    let (code, out, err) = run(
+        &base,
+        &[
+            "keys",
+            "create",
+            "--name",
+            "ci-bot",
+            "--if-missing",
+            "--json",
+        ],
+        None,
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["created"], true);
+    assert_eq!(v["key"], SECRET);
+    assert_eq!(rx.recv().unwrap().method, "GET");
+    let post = rx.recv().unwrap();
+    assert_eq!(post.method, "POST");
+    assert!(post.body.contains("\"name\":\"ci-bot\""), "{}", post.body);
+}
+
+#[test]
+fn revoke_if_exists_on_a_missing_key_is_success_and_sends_no_delete() {
+    let (base, rx) = serve(vec![(200, LIST.into())]);
+    let (code, out, err) = run(
+        &base,
+        &["keys", "revoke", "zzz", "--yes", "--if-exists", "--json"],
+        None,
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["deleted"], false);
+    assert_eq!(rx.recv().unwrap().method, "GET");
+    assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+    // Without the flag a missing key is still exit 3.
+    let (base, _rx) = serve(vec![(200, LIST.into())]);
+    let (code, _, err) = run(&base, &["keys", "revoke", "zzz", "--yes"], None);
+    assert_eq!(code, 3, "{err}");
+}

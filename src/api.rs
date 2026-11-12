@@ -812,6 +812,20 @@ pub(crate) fn encode(s: &str) -> String {
         .collect()
 }
 
+/// `--if-exists` on a delete verb: when `err` says the target is missing,
+/// print `{"deleted": false, <what>: <id>}` (or a note) and report success.
+pub(crate) fn absent_ok(parsed: &ParsedArgs, err: &str, what: &str, id: &str) -> bool {
+    if !parsed.flag_true("if-exists") || crate::exit::classify(err).0 != crate::exit::NOT_FOUND {
+        return false;
+    }
+    if parsed.flag_true("json") {
+        println!("{}", serde_json::json!({ "deleted": false, what: id }));
+    } else {
+        eprintln!("No {what} {id}; nothing to delete.");
+    }
+    true
+}
+
 /// Off a terminal without `--yes`/`--ok`: the exit-6 error whose hint is the
 /// rerun. Call it before any request, so a refused run sends nothing.
 pub(crate) fn require_yes_off_tty(parsed: &ParsedArgs, question: &str) -> Result<(), String> {

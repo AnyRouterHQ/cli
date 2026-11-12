@@ -116,6 +116,37 @@ fn resolve_key(
     }
 }
 
+/// The newest active key named exactly `name`, for `keys create --if-missing`.
+fn active_key_named(rows: &[crate::http::RemoteKey], name: &str) -> Option<crate::http::RemoteKey> {
+    crate::http::keys_newest_first(rows.to_vec())
+        .into_iter()
+        .find(|r| r.active && r.name == name)
+}
+
+/// `keys create --if-missing` found the key: its metadata, never a secret.
+fn print_existing_key(parsed: &ParsedArgs, row: &crate::http::RemoteKey) {
+    if parsed.flag_true("json") {
+        let body = serde_json::json!({
+            "name": row.name,
+            "hash": row.hash,
+            "id": row.id,
+            "masked": row.masked,
+            "created_at": row.created_at,
+            "created": false,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into())
+        );
+    } else {
+        println!(
+            "Key \"{}\" already exists ({}); nothing created.",
+            row.name,
+            short_ref(row)
+        );
+    }
+}
+
 pub(crate) fn default_key_name(agent: Option<&str>) -> String {
     let host = std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("HOST"))
@@ -243,12 +274,16 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                     (path, cfg, base, cred, String::new())
                 }
             };
-            let name = parsed
-                .passthrough
-                .get(1)
-                .cloned()
+            let name = get_string_flag(&parsed.flags, "name")
+                .or_else(|| parsed.passthrough.get(1).cloned())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| default_key_name(agent.as_deref()));
+            if parsed.flag_true("if-missing") {
+                if let Some(row) = active_key_named(&fetch_keys(&base, &cred)?, &name) {
+                    print_existing_key(parsed, &row);
+                    return Ok(0);
+                }
+            }
             let mut body = scope_fields(parsed, crate::civil::now_secs())?;
             body.remove("disabled");
             body.insert("name".into(), serde_json::Value::String(name.clone()));
@@ -287,6 +322,7 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                     "agent": agent,
                     "account": account_str,
                     "saved": saved,
+                    "created": true,
                 });
                 println!(
                     "{}",
@@ -463,7 +499,10 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             })?;
             crate::api::require_yes_off_tty(parsed, &format!("Revoke key {hash}?"))?;
             let (_path, _cfg, base, cred) = keys_credential(parsed, env)?;
-            let row = resolve_key(&fetch_keys(&base, &cred)?, &hash)?;
+            let row = match resolve_key(&fetch_keys(&base, &cred)?, &hash) {
+                Err(e) if crate::api::absent_ok(parsed, &e, "key", &hash) => return Ok(0),
+                other => other?,
+            };
             if !parsed.skip_confirm() {
                 let this_machine = if is_active_key_row(&row.masked, Some(&cred)) {
                     " This is the key this machine uses."
