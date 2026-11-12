@@ -27,9 +27,21 @@ ROUTES = {
     "/api/v1/key": {"data": {"label": "smoke", "limit": None, "usage": 0}},
     "/api/v1/keys": {"data": [KEY_ROW]},
     "/api/v1/credits": {"data": {"balance": 12.5, "total_credits": 20, "total_usage": 7.5}},
+    "/api/v1/analytics/summary": {
+        "total_requests": 3,
+        "total_tokens": 120,
+        "total_cost": 0.01,
+        "avg_latency_ms": 900,
+        "cache_hit_rate": 0,
+        "cost_savings": 0,
+        "period": {"start": "2026-01-01T00:00:00Z", "end": "2026-01-31T00:00:00Z"},
+    },
     "/api/v1/logs": {"data": [], "has_more": False},
     "/api/v1/models": {"data": [{"id": "smoke/model", "name": "Smoke", "context_length": 8192}]},
 }
+
+# Routes the server answers only for a management key (ak_).
+AK_ONLY = {"/api/v1/analytics/summary"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,6 +65,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/v1/status/"):
             code = int(path.rsplit("/", 1)[1])
             self.reply(code, {"error": {"message": f"smoke status {code}"}})
+        elif path in AK_ONLY and not (self.headers.get("Authorization") or "").startswith("Bearer ak_"):
+            # Like the server: these routes reject an sk-ar key.
+            self.reply(401, {"error": {"message": "Invalid or expired token"}})
         elif path in ROUTES:
             self.reply(200, ROUTES[path])
         else:

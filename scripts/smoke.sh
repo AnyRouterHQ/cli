@@ -33,11 +33,13 @@ unset ANYROUTER_API_KEY ANYROUTER_MANAGEMENT_KEY ANYROUTER_PROFILE ANYR_OUTPUT A
 mkdir -p "$ANYROUTER_HOME"
 # An obviously fake key; the output must never show it in full.
 FAKE_KEY="sk-ar-v1-smokesmokesmokesmokesmoke0000"
+# The mock config also holds a fake management key (stats); never shown in full.
+FAKE_MK="ak_smokesmokesmokesmokesmoke0000"
 
 write_config() { # <base_url or empty>
   {
     printf 'active_profile: default\nprofiles:\n  default:\n    api_key: %s\n' "$FAKE_KEY"
-    [ -n "$1" ] && printf '    base_url: %s\n' "$1"
+    [ -n "$1" ] && printf '    base_url: %s\n    management_key: %s\n' "$1" "$FAKE_MK"
   } >"$ANYROUTER_HOME/config.yaml"
 }
 
@@ -111,11 +113,11 @@ done
 [ -s "$work/port" ] || mock_fail "mock server did not start in 20 s"
 write_config "http://127.0.0.1:$(cat "$work/port")/api"
 
-for cmd in "whoami" "keys list" "usage" "logs"; do
+for cmd in "whoami" "keys list" "usage" "logs" "credits" "stats"; do
   # shellcheck disable=SC2086
   run "$null" $cmd --json; expect "$cmd --json" 0
   is_json "$work/out" || fail "$cmd --json: stdout is not JSON"
-  grep -q "$FAKE_KEY" "$work/out" "$work/err" && fail "$cmd --json printed the full key"
+  grep -q -e "$FAKE_KEY" -e "$FAKE_MK" "$work/out" "$work/err" && fail "$cmd --json printed the full key"
   pass "$cmd --json (mock)"
 done
 
