@@ -1,7 +1,7 @@
 //! `anyr relay devices` and `anyr relay models --devices`: the account's paired
 //! devices, from `/v1/relay/devices`. Rendering is pure so tests compare strings.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
@@ -233,7 +233,7 @@ pub(super) fn device_rows(body: &Value, now: u64) -> Vec<Vec<String>> {
 pub(super) fn model_rows(body: &Value) -> Vec<Vec<String>> {
     let mut per: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
     for d in active(body) {
-        for m in models_of(d).into_iter().collect::<BTreeSet<_>>() {
+        for m in crate::sort::set(models_of(d)) {
             let e = per.entry(m).or_default();
             e.0 += 1;
             e.1 += usize::from(connected(d));

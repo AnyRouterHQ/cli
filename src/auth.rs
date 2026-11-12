@@ -208,7 +208,7 @@ pub fn start_device_flow(_base_url: &str, _tool: Option<&str>) -> Result<DeviceS
 #[cfg(feature = "native")]
 pub fn start_device_flow(base_url: &str, tool: Option<&str>) -> Result<DeviceStart, String> {
     let url = join_api(base_url, "/v1/auth/cli/device/start");
-    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let env: BTreeMap<String, String> = crate::sort::map(std::env::vars());
     let label = crate::cmd::key_audit::device_key_label(
         &crate::cmd::key_audit::machine_host(&env),
         crate::civil::now_secs(),

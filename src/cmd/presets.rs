@@ -169,7 +169,7 @@ fn models_of(preset: &Value) -> Vec<String> {
                     .collect()
             })
             .unwrap_or_default();
-        branches.sort();
+        crate::sort::sort(&mut branches);
         out = branches.into_iter().map(|(_, m)| m).collect();
     }
     out

@@ -222,7 +222,7 @@ mod native {
     /// `telemetry off` may have run since this run decided; and an OTLP
     /// endpoint has no crash form, so nothing is kept for it.
     fn still_on() -> bool {
-        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let env = crate::sort::map(std::env::vars());
         crate::key::load_config_if_present(&crate::config::resolve_config_path(None, &env))
             .is_none_or(|c| c.telemetry != Some(false) && c.telemetry_endpoint.is_none())
     }

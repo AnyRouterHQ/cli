@@ -31,7 +31,7 @@ use crate::cmd::transactions::run_transactions;
 use crate::cmd::usage::run_usage;
 
 pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
-    let env: BTreeMap<String, String> = env.into_iter().collect();
+    let env: BTreeMap<String, String> = crate::sort::map(env);
     let code = run_inner(argv, &env);
     // Counts this run locally; a no-op before argument parsing (`--version`,
     // completion, the telemetry child) and while telemetry is off.

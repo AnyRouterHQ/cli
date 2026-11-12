@@ -517,11 +517,13 @@ fn aliases(
         p.claude_fable(),
     ];
     if parsed.flag_true("json") {
-        let obj: Map<String, Value> = SLOTS
-            .iter()
-            .zip(values)
-            .map(|(s, v)| (s.to_string(), Value::String(v.to_string())))
-            .collect();
+        let mut obj = Map::new();
+        obj.extend(
+            SLOTS
+                .iter()
+                .zip(values)
+                .map(|(s, v)| (s.to_string(), Value::String(v.to_string()))),
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_default()

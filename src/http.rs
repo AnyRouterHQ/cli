@@ -682,17 +682,18 @@ pub fn fetch_intelligence(base_url: &str) -> Result<BTreeMap<String, f64>, Strin
 pub(crate) fn parse_intelligence_body(body: &str) -> Result<BTreeMap<String, f64>, String> {
     let value: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("Invalid benchmarks response: {e}"))?;
-    Ok(value
-        .get("models")
-        .and_then(|v| v.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|m| {
-            let id = m.get("model_id")?.as_str()?.to_string();
-            let score = m.get("intelligence_index")?.as_f64()?;
-            Some((id, score))
-        })
-        .collect())
+    Ok(crate::sort::map(
+        value
+            .get("models")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|m| {
+                let id = m.get("model_id")?.as_str()?.to_string();
+                let score = m.get("intelligence_index")?.as_f64()?;
+                Some((id, score))
+            }),
+    ))
 }
 
 impl CatalogModel {
@@ -1156,7 +1157,7 @@ pub fn is_active_key_row(masked: &str, api_key: Option<&str>) -> bool {
 
 /// Newest `created_at` first. Missing timestamps sort last.
 pub fn keys_newest_first(mut keys: Vec<RemoteKey>) -> Vec<RemoteKey> {
-    keys.sort_by(|a, b| {
+    crate::sort::sort_by(&mut keys, |a, b| {
         b.created_at
             .cmp(&a.created_at)
             .then_with(|| b.hash.cmp(&a.hash))

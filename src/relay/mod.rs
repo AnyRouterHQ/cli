@@ -1002,8 +1002,8 @@ fn select_models(
     picker: Option<Picker<'_>>,
 ) -> Result<BTreeSet<OnDeviceModel>, String> {
     match choice {
-        ModelChoice::All => Ok(OnDeviceModel::ALL.into_iter().collect()),
-        ModelChoice::Only(list) => Ok(list.iter().copied().collect()),
+        ModelChoice::All => Ok(crate::sort::set(OnDeviceModel::ALL)),
+        ModelChoice::Only(list) => Ok(crate::sort::set(list.iter().copied())),
         ModelChoice::Default => {
             let available: Vec<OnDeviceModel> = detected
                 .iter()
@@ -1011,8 +1011,8 @@ fn select_models(
                 .map(|d| d.model)
                 .collect();
             match picker {
-                Some(pick) if !available.is_empty() => Ok(pick(&available)?.into_iter().collect()),
-                _ => Ok(OnDeviceModel::ALL.into_iter().collect()),
+                Some(pick) if !available.is_empty() => Ok(crate::sort::set(pick(&available)?)),
+                _ => Ok(crate::sort::set(OnDeviceModel::ALL)),
             }
         }
     }
@@ -1212,11 +1212,9 @@ fn watch_refresh(
     if !changed {
         return None;
     }
-    let old: std::collections::BTreeSet<&String> =
-        targets.iter().flat_map(|t| t.models.iter()).collect();
+    let old = crate::sort::set(targets.iter().flat_map(|t| t.models.iter()));
     let (added, removed): (Vec<String>, Vec<String>) = {
-        let new: std::collections::BTreeSet<&String> =
-            fresh.iter().flat_map(|t| t.models.iter()).collect();
+        let new = crate::sort::set(fresh.iter().flat_map(|t| t.models.iter()));
         (
             new.difference(&old).map(|s| s.to_string()).collect(),
             old.difference(&new).map(|s| s.to_string()).collect(),
@@ -2297,10 +2295,9 @@ fn resolve_serve(
     let mut prefs = state::load_prefs(paths);
     if *choice == ModelChoice::Default {
         if let Some(saved) = &prefs.models {
-            return Ok(saved
-                .iter()
-                .filter_map(|id| OnDeviceModel::from_id(id))
-                .collect());
+            return Ok(crate::sort::set(
+                saved.iter().filter_map(|id| OnDeviceModel::from_id(id)),
+            ));
         }
     }
     let asked = std::cell::Cell::new(false);
@@ -3217,7 +3214,7 @@ fn whitelist_toggle(
                 return Ok(Some(wl));
             }
             wl.push(id.to_string());
-            wl.sort();
+            crate::sort::sort(&mut wl);
             wl.dedup();
             Ok(Some(wl))
         }
@@ -3379,7 +3376,7 @@ fn run_relay_model_set(
     if enable {
         list.push(model.id().to_string());
     }
-    list.sort();
+    crate::sort::sort(&mut list);
     prefs.models = Some(list);
     state::save_prefs(&paths, &prefs)?;
     println!(

@@ -426,10 +426,11 @@ impl Supervisor {
 
     /// `(managed)` / `(external)` per base URL, for the Endpoints line.
     pub(super) fn tags(&self) -> BTreeMap<&'static str, &'static str> {
-        self.entries
-            .iter()
-            .filter_map(|e| e.status.tag().map(|t| (e.spec.base, t)))
-            .collect()
+        crate::sort::map(
+            self.entries
+                .iter()
+                .filter_map(|e| e.status.tag().map(|t| (e.spec.base, t))),
+        )
     }
 }
 

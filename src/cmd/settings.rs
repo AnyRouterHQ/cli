@@ -227,21 +227,20 @@ pub(crate) fn launch_model(cfg: &Config, agent: &str) -> (String, &'static str) 
 
 /// The launcher section of `anyr config --json`.
 pub(crate) fn launcher_json(cfg: &Config) -> Value {
-    let agents: serde_json::Map<String, Value> = crate::install::KNOWN_AGENTS
-        .iter()
-        .map(|(id, _)| {
-            let (model, source) = launch_model(cfg, id);
-            let args = cfg
-                .agent_binding(id)
-                .map(|b| b.args.clone())
-                .unwrap_or_default();
-            let yolo = get(cfg, &Setting::Yolo(id.to_string())).as_deref() == Some("true");
-            (
-                id.to_string(),
-                json!({ "model": model, "model_source": source, "args": args, "yolo": yolo }),
-            )
-        })
-        .collect();
+    let mut agents = serde_json::Map::new();
+    // `extend` inserts one by one; `collect` would compile in a sort.
+    agents.extend(crate::install::KNOWN_AGENTS.iter().map(|(id, _)| {
+        let (model, source) = launch_model(cfg, id);
+        let args = cfg
+            .agent_binding(id)
+            .map(|b| b.args.clone())
+            .unwrap_or_default();
+        let yolo = get(cfg, &Setting::Yolo(id.to_string())).as_deref() == Some("true");
+        (
+            id.to_string(),
+            json!({ "model": model, "model_source": source, "args": args, "yolo": yolo }),
+        )
+    }));
     let profile = cfg
         .profiles
         .get(&cfg.active_profile)

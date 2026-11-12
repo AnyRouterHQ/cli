@@ -727,7 +727,7 @@ fn usage(message: impl Into<String>) -> Fail {
 fn scan_dir(root: &Path) -> Res<Vec<Entry>> {
     let mut found = Vec::new();
     walk(root, root, &mut found)?;
-    found.sort_by(|a, b| a.rel.cmp(&b.rel));
+    crate::sort::sort_by(&mut found, |a, b| a.rel.cmp(&b.rel));
     if found.is_empty() {
         return Err(usage(format!(
             "{} has no files to publish.",

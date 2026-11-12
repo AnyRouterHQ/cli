@@ -9,7 +9,7 @@ Native Rust CLI (`anyr`) for the AnyRouter gateway. One crate, lib plus bin. Sta
 | Test | `cargo test --locked --all-targets` |
 | Clippy | `cargo clippy --locked --all-targets` |
 | Format | `cargo fmt --check` |
-| Size | `python scripts/bench.py measure --bin target/release/anyr --asset anyr-linux-x86_64 --kind native --out /tmp/anyr-bench.json` (stripped linux x86_64 ≤ `LINUX_X86_64_BUDGET_BYTES` in `scripts/bench.py`, now 3,662,768 bytes; each timed command ≤ 5 ms median) |
+| Size | `python scripts/bench.py measure --bin target/release/anyr --asset anyr-linux-x86_64 --kind native --out /tmp/anyr-bench.json` (stripped linux x86_64 ≤ `LINUX_X86_64_BUDGET_BYTES` in `scripts/bench.py`, now 3,592,432 bytes; each timed command ≤ 5 ms median) |
 
 Version lock is also enforced in `tests/release_lock.rs`.
 

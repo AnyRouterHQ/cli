@@ -889,7 +889,7 @@ pub(crate) fn apply(
         }
     }
 
-    subs.sort_by_key(|(rank, _, _)| *rank);
+    crate::sort::sort_by_key(&mut subs, |(rank, _, _)| *rank);
     let known = subcommands(agent);
     for (_, sub, after) in subs {
         let chain = chain(&pieces, &known);
@@ -1109,7 +1109,7 @@ fn words(name: &str) -> Vec<&str> {
             }
         })
         .collect();
-    w.sort_unstable();
+    crate::sort::sort(&mut w);
     w
 }
 

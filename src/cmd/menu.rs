@@ -772,7 +772,7 @@ pub(crate) fn switch_agent_account(
 pub(crate) fn bind_agent_account(path: &Path, agent: &str) -> Result<i32, String> {
     let cfg = load_config_if_present(path).unwrap_or_default();
     let mut names: Vec<String> = cfg.profiles.keys().cloned().collect();
-    names.sort();
+    crate::sort::sort(&mut names);
     if names.is_empty() {
         return Err(no_key_error());
     }

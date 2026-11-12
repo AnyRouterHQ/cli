@@ -24,7 +24,7 @@ pub(crate) fn pick_ids(models: &[CatalogModel]) -> Vec<String> {
         .map(|m| catalog_model_id(&m.id))
         .filter(|id| !id.is_empty() && !is_auto_model(id))
         .collect();
-    catalog.sort();
+    crate::sort::sort(&mut catalog);
     catalog.dedup();
     for id in catalog {
         if !ids.iter().any(|existing| existing == &id) {

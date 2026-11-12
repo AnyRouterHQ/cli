@@ -311,7 +311,7 @@ pub fn channel_update_candidates(
             .filter_map(|rel| parse_version(&rel.tag_name).map(|v| (v, rel.clone())))
             .collect();
     }
-    named.sort_by(|a, b| b.0.cmp(&a.0));
+    crate::sort::sort_by(&mut named, |a, b| b.0.cmp(&a.0));
     named.into_iter().map(|(_, r)| r).collect()
 }
 
@@ -476,15 +476,13 @@ pub fn latest_stable_download_url(os: &str, arch: &str) -> String {
 
 /// One line per asset: `"<64 lowercase hex>  <name>"` (sha256sum format).
 pub fn parse_checksums(body: &str) -> BTreeMap<String, String> {
-    body.lines()
-        .filter_map(|line| {
-            let (hex, name) = line.split_once("  ")?;
-            let hex = hex.trim();
-            let name = name.trim();
-            (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
-                .then(|| (name.to_string(), hex.to_ascii_lowercase()))
-        })
-        .collect()
+    crate::sort::map(body.lines().filter_map(|line| {
+        let (hex, name) = line.split_once("  ")?;
+        let hex = hex.trim();
+        let name = name.trim();
+        (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| (name.to_string(), hex.to_ascii_lowercase()))
+    }))
 }
 
 #[cfg(test)]

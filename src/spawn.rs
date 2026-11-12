@@ -283,10 +283,11 @@ fn builtin(id: &str) -> Option<ToolConfig> {
 }
 
 pub fn create_default_tools() -> BTreeMap<String, ToolConfig> {
-    crate::registry::LAUNCHERS
-        .iter()
-        .filter_map(|id| builtin(id).map(|t| (id.to_string(), t)))
-        .collect()
+    crate::sort::map(
+        crate::registry::LAUNCHERS
+            .iter()
+            .filter_map(|id| builtin(id).map(|t| (id.to_string(), t))),
+    )
 }
 
 pub fn canonical_tool(name: &str) -> &str {

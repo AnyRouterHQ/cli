@@ -163,7 +163,7 @@ fn flags(canonical: &str) -> Vec<&'static str> {
         .map(<[_]>::to_vec)
         .unwrap_or_default();
     f.retain(|x| !matches!(*x, "json" | "quiet" | "help" | "dump-tui"));
-    f.sort_unstable();
+    crate::sort::sort(&mut f);
     f
 }
 
@@ -491,7 +491,7 @@ fn exits(s: &Spec) -> Vec<i32> {
     if s.confirms {
         codes.push(CONFIRM_REQUIRED);
     }
-    codes.sort_unstable();
+    crate::sort::sort(&mut codes);
     codes
 }
 

@@ -1111,7 +1111,7 @@ pub fn rank_ids(query: &str, ids: &[String]) -> Vec<String> {
             }
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    crate::sort::sort_by(&mut scored, |a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     scored.into_iter().map(|(_, _, id)| id).collect()
 }
 

@@ -946,7 +946,7 @@ pub(crate) fn config_account_actions(
     let path = config_path(parsed, env);
     let cfg = load_config_if_present(&path).unwrap_or_default();
     let mut names: Vec<String> = cfg.profiles.keys().cloned().collect();
-    names.sort();
+    crate::sort::sort(&mut names);
     let mut labels: Vec<String> = names
         .iter()
         .map(|n| {

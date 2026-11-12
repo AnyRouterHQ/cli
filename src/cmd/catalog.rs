@@ -103,7 +103,7 @@ pub(crate) fn apply(models: &[Value], f: &Filter) -> Vec<Value> {
         .collect();
     let num = |m: &Value, side: &str| price(m, side).unwrap_or(f64::MAX);
     match f.sort.as_deref() {
-        Some("price") => out.sort_by(|a, b| {
+        Some("price") => crate::sort::sort_by(&mut out, |a, b| {
             num(a, "input_per_1m")
                 .partial_cmp(&num(b, "input_per_1m"))
                 .unwrap_or(Ordering::Equal)
@@ -113,10 +113,10 @@ pub(crate) fn apply(models: &[Value], f: &Filter) -> Vec<Value> {
                         .unwrap_or(Ordering::Equal),
                 )
         }),
-        Some("context") => out.sort_by_key(|m| {
+        Some("context") => crate::sort::sort_by_key(&mut out, |m| {
             std::cmp::Reverse(m.get("context_length").and_then(Value::as_i64).unwrap_or(0))
         }),
-        Some("new") => out.sort_by_key(|m| {
+        Some("new") => crate::sort::sort_by_key(&mut out, |m| {
             std::cmp::Reverse(m.get("created").and_then(Value::as_i64).unwrap_or(0))
         }),
         _ => {}

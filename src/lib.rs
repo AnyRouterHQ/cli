@@ -31,6 +31,7 @@ pub mod registry;
 pub mod relay;
 pub mod report;
 pub mod schema;
+pub mod sort;
 pub mod spawn;
 pub mod spinner;
 pub mod telemetry;
