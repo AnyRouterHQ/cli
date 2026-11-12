@@ -280,8 +280,12 @@ pub fn skip_reason(
     {
         return Some("agent mode");
     }
-    // A pipe or an agent shell: stay quiet unless explicitly allowed.
-    if !ctx.tty && env_flag(env, "ANYR_AUTO_UPDATE") != Some(true) {
+    // A pipe or an agent shell: stay quiet unless explicitly allowed. A
+    // launcher (`anyr claude` from an IDE task or a wrapper) still checks:
+    // the check is detached and prints nothing off a terminal.
+    let launcher =
+        crate::registry::LAUNCHERS.contains(&crate::cmd::dispatch::canonical_command(command));
+    if !ctx.tty && !launcher && env_flag(env, "ANYR_AUTO_UPDATE") != Some(true) {
         return Some("not a tty");
     }
     if ctx.dev_build {
@@ -554,7 +558,9 @@ pub fn on_startup(command: &str, parsed: &ParsedArgs, env: &BTreeMap<String, Str
         }
     }
     if let (Some(hint), Some(latest)) = (state.hint.clone(), state.latest_seen.clone()) {
-        if crate::upgrade::needs_upgrade(VERSION, &latest)
+        // Off a terminal the note prints nothing; keep the hint for a person.
+        if std::io::IsTerminal::is_terminal(&std::io::stderr())
+            && crate::upgrade::needs_upgrade(VERSION, &latest)
             && state.notified.as_deref() != Some(&latest)
         {
             notify_once(env, &mut state, &hint, &latest);
@@ -850,6 +856,56 @@ mod tests {
         let mut ci_false = base.clone();
         ci_false.insert("CI".into(), "false".into());
         assert_eq!(skip_reason("models", &run, &ci_false, TTY), None);
+    }
+
+    #[test]
+    fn launchers_check_off_a_tty_but_keep_every_opt_out() {
+        // WHY: IDE tasks and wrappers start `anyr claude` without a TTY; those
+        // users never saw an update. The detached check is silent off a TTY.
+        let dir = tmp_dir("launcher");
+        let base = home_env(&dir);
+        let no_tty = RunContext {
+            tty: false,
+            dev_build: false,
+        };
+        for cmd in ["claude", "cc", "codex", "pool", "poolside", "fx"] {
+            assert_eq!(
+                skip_reason(cmd, &parsed(cmd, &[]), &base, no_tty),
+                None,
+                "{cmd}"
+            );
+        }
+        assert_eq!(
+            skip_reason("models", &parsed("models", &[]), &base, no_tty),
+            Some("not a tty")
+        );
+        let run = parsed("claude", &[]);
+        for (k, v) in [
+            ("CI", "true"),
+            ("ANYR_NO_UPDATE", "1"),
+            ("ANYR_AUTO_UPDATE", "0"),
+            (ENV_LAUNCHER_CHILD, "1"),
+            (ENV_AUTO_CHILD, "1"),
+            ("ANYR_OUTPUT", "json"),
+            ("ANYR_QUIET", "1"),
+        ] {
+            let mut env = base.clone();
+            env.insert(k.into(), v.into());
+            assert!(
+                skip_reason("claude", &run, &env, no_tty).is_some(),
+                "{k}={v} must skip"
+            );
+        }
+        let json = parsed("claude", &["json"]);
+        assert_eq!(
+            skip_reason("claude", &json, &base, no_tty),
+            Some("agent mode")
+        );
+        let dev = RunContext {
+            tty: false,
+            dev_build: true,
+        };
+        assert_eq!(skip_reason("claude", &run, &base, dev), Some("dev build"));
     }
 
     #[test]
