@@ -23,7 +23,8 @@ Output
                                 a terminal)
   Without a TTY, anyr shows no prompts, spinners or update notices. Commands
   that would ask first need --yes; without it they exit 6 and the hint is
-  the same command with --yes added (a --key value in it is masked).
+  the same command with --yes added (a --key value becomes
+  "$ANYROUTER_API_KEY").
 
 Exit codes
   0  ok            success
@@ -33,7 +34,8 @@ Exit codes
   4  auth          no key, a rejected key, or a key without the scope
   5  rate_limited  HTTP 429; retry later
   6  confirm_required  asks first; rerun with --yes (the hint is the command)
-  7  network       no answer: DNS, TLS, connect or timeout; retry is safe
+  7  network       no answer: DNS, TLS, connect or timeout; retry reads
+                   freely, and writes only when they are idempotent
   8  payment_required  HTTP 402; add credits or change plan
 
 Auth

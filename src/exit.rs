@@ -46,7 +46,7 @@ pub const CODES: &[(i32, &str, &str)] = &[
     (
         NETWORK,
         "network",
-        "no answer: DNS, TLS, connect or timeout; retry is safe",
+        "no answer: DNS, TLS, connect or timeout; retry reads freely, writes only if idempotent",
     ),
     (
         PAYMENT_REQUIRED,
@@ -238,7 +238,11 @@ pub fn json_line(code: i32, message: &str) -> String {
     if !hints.is_empty() {
         err["hint"] = serde_json::Value::String(hints.join("\n"));
     }
-    if let Some(id) = request_id() {
+    // Only an error from an HTTP reply gets the id; a later local failure
+    // must not carry an earlier reply's id.
+    if let Some(id) = request_id()
+        .filter(|_| !matches!(code, USAGE | CONFIRM_REQUIRED | NETWORK) && plain.contains("HTTP "))
+    {
         err["request_id"] = serde_json::Value::String(id);
     }
     serde_json::json!({ "error": err }).to_string()
@@ -340,9 +344,13 @@ mod tests {
     #[test]
     fn a_failed_response_id_lands_in_the_envelope() {
         set_request_id(Some("req_1".into()));
-        let v: serde_json::Value = serde_json::from_str(&json_line(ERROR, "x")).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&json_line(ERROR, "HTTP 500: boom")).unwrap();
+        let local: serde_json::Value =
+            serde_json::from_str(&json_line(ERROR, "agent not installed")).unwrap();
         set_request_id(None);
         assert_eq!(v["error"]["request_id"], "req_1");
+        assert!(local["error"].get("request_id").is_none(), "stale id");
     }
 
     #[test]

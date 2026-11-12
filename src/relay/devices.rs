@@ -110,10 +110,14 @@ pub(super) fn run(
             }
         }
         Devices::Rm { id, yes } => {
+            let question = format!("Remove device {id} from your AnyRouter account?");
             if !yes {
-                return Err(crate::exit::confirm_required(&format!(
-                    "Remove device {id} from your AnyRouter account?"
-                )));
+                if !crate::term::is_interactive() {
+                    return Err(crate::exit::confirm_required(&question));
+                }
+                if !crate::term::confirm(&question) {
+                    return Err("Cancelled. Nothing was removed.".into());
+                }
             }
             // DELETE is gated by requireAuth (session or management key), not by an
             // inference key, so prefer the management key when one is configured.

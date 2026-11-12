@@ -427,7 +427,7 @@ fn run_add(
 Pipe it on stdin, set {KEY_ENV}, or enter it at the prompt."
         )));
     }
-    let yes = parsed.flag_true("yes");
+    let yes = parsed.skip_confirm();
     // Usage checks before any read or request: a donation needs consent.
     if donate {
         crate::api::require_yes_off_tty(

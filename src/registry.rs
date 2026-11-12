@@ -369,6 +369,7 @@ pub const SPECS: &[Spec] = &[
     local("relay status", &[]),
     local("relay logs", &[]),
     local("relay models", &[]),
+    guarded("relay devices", Sk, &["[ls|rename|pool|rm]", "[id]"]),
     write("relay pool", Sk, &["[on|off]"]),
     write("relay pair", Sk, &[]),
     write("relay rename", Sk, &["<name>"]),
@@ -384,8 +385,12 @@ pub const SPECS: &[Spec] = &[
     local("help", &["[topic]"]),
 ];
 
-/// Every launcher (`anyr claude`, …) without a row of its own.
-const LAUNCH: Spec = read("", Sk, &["[agent args…]"]);
+/// Every launcher (`anyr claude`, …) without a row of its own. A headless
+/// run (`-p`) asks before spending, so it can exit 6.
+const LAUNCH: Spec = Spec {
+    confirms: true,
+    ..read("", Sk, &["[agent args…]"])
+};
 
 /// Value flags whose value is a whole number.
 const INT_FLAGS: &[&str] = &[

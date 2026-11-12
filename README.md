@@ -154,7 +154,8 @@ git diff | anyr chat "Review this" - --no-stream
 anyr help agents                         # the guide, from docs/agents.md
 ```
 
-Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited.
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.
 
 ## Command reference
 

@@ -15,30 +15,78 @@ pub fn set_invoked_args(args: &[String]) {
 
 /// This run's command line with `--yes` added (before a `--`), quoted for a
 /// POSIX shell.
+/// A secret on the command line (`--key <v>`, `--key=<v>`, an
+/// `Authorization` header) becomes `"$ANYROUTER_API_KEY"`, so the hint stays
+/// runnable and never shows the secret.
 pub fn rerun_with_yes() -> String {
-    let mut args = INVOKED_ARGS.with(|slot| slot.borrow().clone());
-    if !args.iter().any(|a| a == "--yes") {
-        let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
-        args.insert(at, "--yes".into());
+    const KEY_REF: &str = "\"$ANYROUTER_API_KEY\"";
+    let args = INVOKED_ARGS.with(|slot| slot.borrow().clone());
+    let sep = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let needs_yes = !args[..sep].iter().any(|w| w == "--yes");
+    let mut words: Vec<String> = Vec::new();
+    let mut secret_next = None;
+    for (i, a) in args.iter().enumerate() {
+        if i == sep && needs_yes {
+            words.push("--yes".into());
+        }
+        if let Some(replacement) = secret_next.take().filter(|_| a != "-") {
+            words.push(replacement);
+            continue;
+        }
+        if i < sep {
+            if a.starts_with("--key=") && a != "--key=-" {
+                words.push(format!("--key={KEY_REF}"));
+                continue;
+            }
+            if a == "--key" {
+                secret_next = Some(KEY_REF.to_string());
+            } else if a == "-H"
+                && args
+                    .get(i + 1)
+                    .is_some_and(|h| h.to_ascii_lowercase().starts_with("authorization"))
+            {
+                secret_next = Some("\"Authorization: Bearer $ANYROUTER_API_KEY\"".into());
+            }
+        }
+        words.push(shell_quote(a));
+    }
+    if sep == args.len() && needs_yes {
+        words.push("--yes".into());
     }
     let mut out = invoked_bin();
-    for a in &args {
+    for w in words {
         out.push(' ');
-        out.push_str(&shell_quote(a));
+        out.push_str(&w);
     }
     out
 }
 
 fn shell_quote(word: &str) -> String {
     let plain = !word.is_empty()
+        && !word.starts_with('=')
         && word
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_./:=@,+%".contains(&b));
     if plain {
-        word.to_string()
-    } else {
-        format!("'{}'", word.replace('\'', "'\\''"))
+        return word.to_string();
     }
+    if word.chars().any(char::is_control) {
+        // `$'…'` keeps a newline inside one line, so the hint stays one line.
+        let mut out = String::from("$'");
+        for c in word.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '\'' => out.push_str("\\'"),
+                '\n' => out.push_str("\\n"),
+                '\t' => out.push_str("\\t"),
+                c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('\'');
+        return out;
+    }
+    format!("'{}'", word.replace('\'', "'\\''"))
 }
 
 const LAUNCH_HELP_BODY: &str = "\
@@ -778,7 +826,8 @@ Options:
   --json            One JSON object: id, model, content, finish_reason, usage
                     (`id` works with `{bin} generation <id>`)
 
-Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited.
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.
 ";
 
 const ARTIFACT: &str = "{bin} artifact — publish a page or folder to a shareable URL
@@ -861,7 +910,8 @@ Examples:
   {bin} pool stats
   {bin} pool providers --json | jq '.providers[].key_count'
 
-Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited.
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.
 Without a subcommand, `{bin} pool` launches Poolside (below).
 ";
 
@@ -894,7 +944,8 @@ Examples:
   {bin} presets edit coding --model z-ai/glm-4.7,qwen/qwen3-coder,openai/gpt-5
   {bin} claude --preset coding
 
-Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited.
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.
 ";
 
 const MCP: &str = "{bin} mcp — wire the AnyRouter MCP gateway into an agent
@@ -928,7 +979,8 @@ Examples:
   {bin} mcp add opencode
   {bin} mcp connections --json
 
-Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited.
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.
 ";
 
 const GENERATION: &str = "{bin} generation — cost, provider and timing of one call
@@ -949,7 +1001,8 @@ Examples:
   {bin} generation gen_abc123
   {bin} gen gen_abc123 --json | jq .total_cost
 
-Exit codes: 0 ok, 1 error, 2 usage, 3 unknown id, 4 auth, 5 rate limited.
+Exit codes: 0 ok, 1 error, 2 usage, 3 unknown id, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.
 ";
 
 const TRANSACTIONS: &str = "{bin} transactions — your credit ledger
@@ -1085,7 +1138,7 @@ Usage:
 The key is read from $ANYR_BYOK_KEY, else stdin when piped, else a hidden
 prompt. It is never accepted as an argument and never printed.
 --donate shows the pool terms and asks to confirm; scripts pass --yes.
-Without a terminal and without --yes, --donate exits 2 and sends nothing.
+Without a terminal and without --yes, --donate exits 6 and sends nothing.
 
 Needs a management key (ak_…) with read:byok and write:byok:
   export ANYROUTER_MANAGEMENT_KEY=ak_…
@@ -1232,6 +1285,36 @@ mod tests {
             "--yes".into(),
         ]);
         assert!(super::rerun_with_yes().ends_with("keys revoke ab12 --yes"));
+        // `--yes` after `--` belongs to the agent; anyr still needs its own.
+        super::set_invoked_args(&["claude", "-p", "a\nb", "--", "--yes"].map(String::from));
+        let r = super::rerun_with_yes();
+        assert!(r.ends_with("claude -p $'a\\nb' --yes -- --yes"), "{r}");
+        super::set_invoked_args(&["x", "=ls"].map(String::from));
+        assert!(super::rerun_with_yes().ends_with("x '=ls' --yes"));
+        super::set_invoked_args(&[]);
+    }
+
+    #[test]
+    fn rerun_never_shows_a_key_and_stays_runnable() {
+        // WHY: the hint lands in agent transcripts; a masked key would fail
+        // the rerun and a plain one would leak.
+        let words = [
+            "api",
+            "GET",
+            "/x",
+            "--key",
+            "sk-secret-123",
+            "-H",
+            "Authorization: Bearer abc",
+        ];
+        super::set_invoked_args(&words.map(String::from));
+        let r = super::rerun_with_yes();
+        assert!(!r.contains("sk-secret") && !r.contains("abc"), "{r}");
+        assert!(r.contains("--key \"$ANYROUTER_API_KEY\""), "{r}");
+        super::set_invoked_args(&["x", "--key=sk-secret-123"].map(String::from));
+        assert!(!super::rerun_with_yes().contains("sk-secret"));
+        super::set_invoked_args(&["x", "--key", "-"].map(String::from));
+        assert!(super::rerun_with_yes().ends_with("x --key - --yes"));
         super::set_invoked_args(&[]);
     }
 

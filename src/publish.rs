@@ -67,7 +67,8 @@ $ {bin} publish explain page.html --dry-run    # page.html + page-light.html\n\n
 Visibility: unlisted (default; link works, not listed), private (only you),\n\
 public (listed after review). Re-running the same document is safe: it carries a\n\
 stable Idempotency-Key, so the server returns the original instead of a copy.\n\n\
-Exit codes: 0 ok, 1 error, 2 usage or invalid document, 3 not found, 4 auth, 5 rate limited.\n"
+Exit codes: 0 ok, 1 error, 2 usage or invalid document, 3 not found, 4 auth, 5 rate limited,\n\
+6 needs --yes, 7 network, 8 payment required.\n"
     )
 }
 
