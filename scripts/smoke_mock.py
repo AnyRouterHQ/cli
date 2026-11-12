@@ -9,6 +9,7 @@ Standard library only.
 from __future__ import annotations
 
 import json
+import socketserver
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -60,8 +61,16 @@ class Handler(BaseHTTPRequestHandler):
     do_GET = do_POST = do_PATCH = do_DELETE = do_PUT = handle_any
 
 
+class Server(ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind calls socket.getfqdn(), a reverse DNS lookup
+        # that can hang for tens of seconds on macOS runners.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = Server(("127.0.0.1", 0), Handler)
     with open(sys.argv[1], "w", encoding="utf-8") as f:
         f.write(str(server.server_address[1]))
     server.serve_forever()
