@@ -311,6 +311,7 @@ fn is_page(topic: &str) -> bool {
             | "logout"
             | "upgrade"
             | "transactions"
+            | "credits"
             | "embed"
             | "eval"
             | "schema"

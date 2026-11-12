@@ -24,3 +24,43 @@ pub(crate) fn run_usage(
     );
     Ok(0)
 }
+
+/// `anyr credits [balance|history]`: `balance` (the default) is `usage`,
+/// `history` is `transactions`; same code paths, same output and JSON.
+pub(crate) fn run_credits(
+    parsed: &ParsedArgs,
+    env: &BTreeMap<String, String>,
+) -> Result<i32, String> {
+    let mut next = parsed.clone();
+    let verb = if next.passthrough.is_empty() {
+        "balance".to_string()
+    } else {
+        next.passthrough.remove(0)
+    };
+    // Each verb takes only its own command's flags.
+    let (own, other): (&[&str], &str) = match verb.as_str() {
+        "balance" => (&["no-detail"], "history"),
+        "history" => (&["limit", "type"], "balance"),
+        _ => {
+            return Err(crate::cmd::dispatch::hint(&format!(
+                "Unknown credits subcommand \"{verb}\". Try: balance | history"
+            )))
+        }
+    };
+    for flag in ["no-detail", "limit", "type"] {
+        if next.flags.contains_key(flag) && !own.contains(&flag) {
+            return Err(crate::cmd::dispatch::hint(&format!(
+                "--{flag} belongs to: {{bin}} credits {other}"
+            )));
+        }
+    }
+    if verb == "history" {
+        crate::cmd::transactions::run_transactions(&next, env)
+    } else if next.passthrough.is_empty() {
+        run_usage(&next, env)
+    } else {
+        Err(crate::cmd::dispatch::hint(
+            "Usage: {bin} credits [balance] [--json]",
+        ))
+    }
+}

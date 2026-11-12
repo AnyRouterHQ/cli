@@ -64,7 +64,8 @@ Safe to rerun
                                 their exit codes
 
 Account
-  anyr usage --json             Credits
+  anyr credits --json           Credits (same as anyr usage --json)
+  anyr credits history --json   Credit ledger (same as anyr transactions)
   anyr logs --json              Recent requests
   anyr keys list --json         API keys
   anyr api <resource> [verb]    Any dashboard resource; anyr api METHOD /path

@@ -64,8 +64,8 @@ pub fn group(canonical: &str) -> &'static str {
         c if LAUNCHERS.contains(&c) => "launch",
         "relay" => "relay",
         "artifact" | "publish" | "apps" => "publish",
-        "usage" | "keys" | "byok" | "presets" | "logs" | "generation" | "transactions" | "mcp"
-        | "api" => "account",
+        "usage" | "credits" | "keys" | "byok" | "presets" | "logs" | "generation"
+        | "transactions" | "mcp" | "api" => "account",
         _ => "setup",
     }
 }
@@ -94,6 +94,7 @@ pub fn subcommands(canonical: &str) -> &'static [&'static str] {
         "presets" => &["list", "show", "create", "edit", "rm"],
         "mcp" => &["url", "add", "connections"],
         "logs" => &["sessions"],
+        "credits" => &["balance", "history"],
         "config" => &["get", "path", "use"],
         "relay" => &[
             "start", "stop", "status", "logs", "models", "devices", "pool", "pair", "rename",
@@ -325,6 +326,7 @@ pub const SPECS: &[Spec] = &[
     local("mcp url", &[]),
     edit("mcp add", &["<agent>"]),
     read("transactions", Sk, &[]),
+    read("credits", Sk, &["[balance|history]"]),
     read("chat", Sk, &["[prompt|-]"]),
     read("embed", Sk, &["[text…]"]),
     read("eval", Sk, &["[prompt]"]),
@@ -672,6 +674,7 @@ mod tests {
             "chat",
             "logs",
             "transactions",
+            "credits",
             "embed",
             "generation",
             "presets",

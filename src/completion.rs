@@ -37,6 +37,10 @@ pub fn subcommands(command: &str) -> &'static [(&'static str, &'static str)] {
             ("rotate", "New secret for a key; the old one stops working"),
             ("revoke", "Revoke an API key"),
         ],
+        "credits" => &[
+            ("balance", "Credits remaining (same as usage)"),
+            ("history", "Credit ledger (same as transactions)"),
+        ],
         "config" => &[
             ("get", "Print current settings"),
             ("path", "Print the config file path"),

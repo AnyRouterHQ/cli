@@ -1,0 +1,19 @@
+{bin} credits — balance and credit history
+
+Usage:
+  {bin} credits [balance] [--json] [--no-detail]
+  {bin} credits history [--type <type>] [--limit N] [--json]
+
+`credits balance` (the default) prints the same output and JSON as
+`{bin} usage`; `credits history` the same as `{bin} transactions`. Both of
+those still work.
+
+Buying credits from the CLI is not available yet: the purchase API accepts a
+signed-in browser session only. Top up at https://anyrouter.dev/dashboard/credits.
+
+Options:
+  --type <type>     history: purchase | usage | refund | …
+  --limit <n>       history: rows to fetch, 1 to 100
+  --json            Print as JSON
+  --key <key>       Use this API key (or $ANYROUTER_API_KEY, or the saved login)
+  --profile <name>  Use another account

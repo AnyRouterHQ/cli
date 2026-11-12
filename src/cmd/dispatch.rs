@@ -286,8 +286,8 @@ pub(crate) fn cmd_kind(command: &str) -> Option<CmdKind> {
         | "pool" | "pi" | "qwen" | "goose" | "aider" | "crush" | "kilo" | "fx" | "upgrade"
         | "onboard" | "impl" | "plan" | "fix" | "deploy" | "cp" | "relay" | "decision"
         | "commands" | "api" | "completion" | "byok" | "publish" | "apps" | "artifact" | "chat"
-        | "logs" | "transactions" | "embed" | "generation" | "presets" | "mcp" | "eval"
-        | "task" | "delegate" | "schema" | "telemetry" | "report" => CmdKind::Implemented,
+        | "logs" | "transactions" | "credits" | "embed" | "generation" | "presets" | "mcp"
+        | "eval" | "task" | "delegate" | "schema" | "telemetry" | "report" => CmdKind::Implemented,
         "cursor" | "cline" | "windsurf" => CmdKind::HelpOnly,
         "audit" | "skills" | "prompt" => CmdKind::Stub,
         _ => return None,
@@ -337,6 +337,7 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
     ("models", "List catalog and set the default"),
     ("model", "Alias of models"),
     ("usage", "Credits remaining"),
+    ("credits", "Credit balance and history"),
     ("logs", "Recent requests, failures and sessions"),
     ("generation", "Cost, provider and timing of one call"),
     ("gen", "Alias of generation"),
@@ -458,6 +459,16 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
             "fable", "agent", "dump-tui", "free", "type", "owner", "search", "sort",
         ],
         "usage" => &["profile", "base-url", "config", "json", "key", "no-detail"],
+        "credits" => &[
+            "profile",
+            "base-url",
+            "config",
+            "json",
+            "key",
+            "no-detail",
+            "limit",
+            "type",
+        ],
         "decision" => &[
             "model",
             "state",

@@ -138,7 +138,7 @@ for one command.
 | Launch | `claude`, `codex`, `grok`, `opencode`, `pi`, `pool`, and more ([Launchers](#launchers)) |
 | Relay | `relay` |
 | Publish | `publish`, `apps`, `artifact` |
-| Account | `api`, `usage`, `logs`, `generation`, `presets`, `mcp`, `transactions`, `keys`, `byok` |
+| Account | `api`, `credits`, `usage`, `logs`, `generation`, `presets`, `mcp`, `transactions`, `keys`, `byok` |
 | Setup and help | `config`, `menu`, `onboard`, `upgrade`, `completion`, `commands`, `help` |
 
 ### For agents and scripts
@@ -339,6 +339,16 @@ and prints each answer (cut at 600 characters, `--full` for all), then a summary
 table: model, provider that answered, latency, tokens in/out, cost, status.
 `--json` prints one line per (prompt, model). Output follows `--model` order.
 If a model fails it shows `error` and the others still print; the exit code is 1.
+
+### Credits: `anyr credits`
+
+```bash
+anyr credits                         # balance (same as anyr usage)
+anyr credits history --type purchase # ledger (same as anyr transactions)
+```
+
+Buying credits from the CLI is not available yet: the purchase API takes a
+signed-in browser session only. Top up at <https://anyrouter.dev/dashboard/credits>.
 
 ### Credit ledger: `anyr transactions`
 

@@ -298,6 +298,7 @@ fn dispatch(
         "logout" => run_logout(parsed, env),
         "models" => run_models_cli(parsed, env),
         "usage" => run_usage(parsed, env),
+        "credits" => crate::cmd::usage::run_credits(parsed, env),
         "whoami" | "status" => run_whoami(parsed, env),
         "config" => run_config(parsed, env),
         "decision" => run_decision(parsed, env),
