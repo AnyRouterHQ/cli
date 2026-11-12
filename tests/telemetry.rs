@@ -49,8 +49,19 @@ fn capture_server() -> (String, Receiver<serde_json::Value>) {
 /// `anyr help` with telemetry allowed (no CI, no ANYR_NO_UPDATE) unless the
 /// caller adds an opt-out.
 fn anyr(home: &Path, url: &str, extra: &[(&str, &str)]) {
+    let out = anyr_args(home, url, &["help"], extra);
+    assert!(out.status.success(), "{out:?}");
+}
+
+/// `anyr <args>` with telemetry allowed, output captured.
+fn anyr_args(
+    home: &Path,
+    url: &str,
+    args: &[&str],
+    extra: &[(&str, &str)],
+) -> std::process::Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_anyr"));
-    cmd.arg("help")
+    cmd.args(args)
         .env("NO_COLOR", "1")
         .env("HOME", home)
         .env("ANYROUTER_HOME", home.join("anyr"))
@@ -59,13 +70,12 @@ fn anyr(home: &Path, url: &str, extra: &[(&str, &str)]) {
         .env_remove("ANYR_NO_UPDATE")
         .env_remove("DO_NOT_TRACK")
         .env_remove("ANYR_NO_TELEMETRY")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .env_remove("ANYR_TELEMETRY")
         .stdin(Stdio::null());
     for (k, v) in extra {
         cmd.env(k, v);
     }
-    assert!(cmd.status().unwrap().success());
+    cmd.output().unwrap()
 }
 
 fn state(home: &Path) -> std::path::PathBuf {
@@ -205,6 +215,7 @@ fn every_opt_out_sends_nothing_and_writes_nothing() {
     let cases: &[OptOut] = &[
         ("do-not-track", &[("DO_NOT_TRACK", "1")], None),
         ("anyr-no-telemetry", &[("ANYR_NO_TELEMETRY", "1")], None),
+        ("anyr-telemetry-0", &[("ANYR_TELEMETRY", "0")], None),
         ("ci", &[("CI", "true")], None),
         ("no-update-switch", &[("ANYR_NO_UPDATE", "1")], None),
         ("config-flag", &[], Some("telemetry: false\n")),
@@ -223,4 +234,214 @@ fn every_opt_out_sends_nothing_and_writes_nothing() {
         );
         assert!(!state(&home).exists(), "{name}: wrote an install id");
     }
+}
+
+fn json(out: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stdout)))
+}
+
+#[test]
+fn telemetry_off_as_the_first_command_sends_nothing_and_later_runs_stay_quiet() {
+    // WHY: a user who opts out before anything else must never be counted,
+    // not even by the install ping of the opt-out command itself.
+    let home = common::unique_temp_dir("anyr-telemetry-cmd-off");
+    let (url, rx) = capture_server();
+    let out = anyr_args(&home, &url, &["telemetry", "off", "--json"], &[]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(json(&out)["enabled"], false);
+    let config = std::fs::read_to_string(home.join("anyr").join("config.yaml")).unwrap();
+    assert!(config.contains("telemetry: false"), "{config}");
+    anyr(&home, &url, &[]);
+    assert!(
+        rx.recv_timeout(Duration::from_millis(800)).is_err(),
+        "a ping was sent after telemetry off"
+    );
+    assert!(!state(&home).exists(), "wrote an install id");
+
+    let out = anyr_args(&home, &url, &["telemetry", "status", "--json"], &[]);
+    let v = json(&out);
+    assert_eq!(v["enabled"], false);
+    assert_eq!(v["reason"], "telemetry: false in the config");
+    assert!(v["next_daily"].is_null());
+
+    let out = anyr_args(&home, &url, &["telemetry", "on", "--json"], &[]);
+    assert_eq!(json(&out)["enabled"], true);
+    anyr(&home, &url, &[]);
+    let body = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("telemetry on did not turn the ping back on");
+    assert_eq!(body["event"], "cli_install");
+}
+
+#[test]
+fn status_names_the_switch_that_turned_it_off() {
+    let home = common::unique_temp_dir("anyr-telemetry-why");
+    let (url, _rx) = capture_server();
+    for (k, v, why) in [
+        ("ANYR_TELEMETRY", "0", "ANYR_TELEMETRY=0"),
+        ("ANYR_NO_TELEMETRY", "1", "ANYR_NO_TELEMETRY=1"),
+        ("DO_NOT_TRACK", "1", "DO_NOT_TRACK=1"),
+        ("CI", "true", "CI"),
+    ] {
+        let out = anyr_args(&home, &url, &["telemetry", "--json"], &[(k, v)]);
+        let v = json(&out);
+        assert_eq!(v["enabled"], false, "{k}");
+        assert_eq!(v["reason"], why, "{k}");
+    }
+    let v = json(&anyr_args(&home, &url, &["telemetry", "--json"], &[]));
+    assert_eq!(v["enabled"], true);
+    assert_eq!(v["reason"], "default");
+    assert_eq!(v["endpoint"], url.as_str());
+}
+
+#[test]
+fn status_shows_the_exact_daily_payload_that_is_then_sent() {
+    // WHY: the status output is the user's audit of what leaves the machine;
+    // it must be the very bytes the daily ping posts, not a description.
+    let day = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86400)
+        .unwrap();
+    let home = common::unique_temp_dir("anyr-telemetry-next");
+    std::fs::create_dir_all(home.join("anyr")).unwrap();
+    let id = "0123456789abcdef0123456789abcdef";
+    std::fs::write(
+        state(&home),
+        format!(
+            r#"{{"install_id":"{id}","last_version":"{}","last_daily":{}}}"#,
+            anyr_cli::VERSION,
+            day - 1
+        ),
+    )
+    .unwrap();
+    let (url, rx) = capture_server();
+    let v = json(&anyr_args(
+        &home,
+        &url,
+        &["telemetry", "status", "--json"],
+        &[],
+    ));
+    assert_eq!(v["install_id"], id);
+    let next = v["next_daily"].clone();
+    assert_eq!(next["event"], "cli_daily");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "status itself must not send"
+    );
+    anyr(&home, &url, &[]);
+    let body = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("no daily ping");
+    assert_eq!(body, next);
+
+    let v = json(&anyr_args(
+        &home,
+        &url,
+        &["telemetry", "status", "--dry-run", "--json"],
+        &[],
+    ));
+    let events: Vec<&str> = v["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["event"].as_str().unwrap())
+        .collect();
+    assert_eq!(events, ["cli_install", "cli_update", "cli_daily"]);
+}
+
+#[test]
+fn reset_rotates_the_id_while_on_and_deletes_it_while_off() {
+    let home = common::unique_temp_dir("anyr-telemetry-reset");
+    let (url, rx) = capture_server();
+    anyr(&home, &url, &[]);
+    let first = rx.recv_timeout(Duration::from_secs(5)).expect("install");
+    let old = first["distinct_id"].as_str().unwrap().to_string();
+    let v = json(&anyr_args(
+        &home,
+        &url,
+        &["telemetry", "reset", "--json"],
+        &[],
+    ));
+    let new = v["install_id"].as_str().unwrap().to_string();
+    assert_ne!(new, old);
+    assert_eq!(new.len(), 32);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state(&home)).unwrap()).unwrap();
+    assert_eq!(saved["install_id"], new.as_str());
+
+    let v = json(&anyr_args(
+        &home,
+        &url,
+        &["telemetry", "reset", "--json"],
+        &[("DO_NOT_TRACK", "1")],
+    ));
+    assert!(v["install_id"].is_null());
+    assert!(
+        !state(&home).exists(),
+        "reset while off must not keep an id"
+    );
+}
+
+#[test]
+fn the_notice_never_prints_off_a_terminal() {
+    // WHY: agents and scripts parse stderr; the one-time notice is for a
+    // person, and printing it off a TTY would also burn its only showing.
+    let home = common::unique_temp_dir("anyr-telemetry-notice-pipe");
+    let (url, _rx) = capture_server();
+    let out = anyr_args(&home, &url, &["help"], &[]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("telemetry off"), "{err}");
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state(&home)).unwrap()).unwrap();
+    assert_eq!(saved["notice_shown"], false);
+}
+
+fn pty(home: &Path, url: &str, args: &[&str]) -> Option<String> {
+    let helper = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".agents/skills/verify-anyr/helpers/pty-anyr.py");
+    if !helper.exists() || cfg!(windows) {
+        return None; // PTY helper is dev-machine tooling.
+    }
+    let transcript = home.join(format!("tty-{}.txt", args.join("-")));
+    let out = Command::new("python3")
+        .args([
+            helper.to_str().unwrap(),
+            "--timeout",
+            "8",
+            "--out",
+            transcript.to_str().unwrap(),
+            "--",
+            env!("CARGO_BIN_EXE_anyr"),
+        ])
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env("HOME", home)
+        .env("ANYROUTER_HOME", home.join("anyr"))
+        .env("ANYR_TELEMETRY_URL", url)
+        .env_remove("CI")
+        .env_remove("ANYR_NO_UPDATE")
+        .env_remove("DO_NOT_TRACK")
+        .env_remove("ANYR_NO_TELEMETRY")
+        .env_remove("ANYR_TELEMETRY")
+        .output()
+        .ok()?;
+    Some(
+        std::fs::read_to_string(&transcript)
+            .unwrap_or_else(|_| String::from_utf8_lossy(&out.stdout).into_owned()),
+    )
+}
+
+#[test]
+fn the_notice_prints_once_on_the_first_terminal_run_and_never_under_json() {
+    let home = common::unique_temp_dir("anyr-telemetry-notice-tty");
+    let (url, _rx) = capture_server();
+    let Some(json_run) = pty(&home, &url, &["config", "path", "--json"]) else {
+        return;
+    };
+    assert!(!json_run.contains("telemetry off"), "{json_run}");
+    let first = pty(&home, &url, &["config", "path"]).unwrap();
+    assert!(first.contains("telemetry off"), "{first}");
+    let second = pty(&home, &url, &["config", "path"]).unwrap();
+    assert!(!second.contains("telemetry off"), "{second}");
 }

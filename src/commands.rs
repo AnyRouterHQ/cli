@@ -330,6 +330,16 @@ fn dispatch(
             println!("{}", text.unwrap_or_else(|_| "{}".into()));
             Ok(0)
         }
+        "telemetry" => {
+            #[cfg(feature = "native")]
+            {
+                crate::cmd::telemetry::run(parsed, env)
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                stub("telemetry")
+            }
+        }
         "pool" if is_pool_subcommand(parsed) => run_pool(parsed, env),
         c if crate::registry::LAUNCHERS.contains(&c) => run_launch(command, parsed, env),
         "chat" => {

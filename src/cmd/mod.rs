@@ -30,6 +30,8 @@ pub(crate) mod settings;
 pub(crate) mod status;
 #[cfg(feature = "native")]
 pub(crate) mod task;
+#[cfg(feature = "native")]
+pub(crate) mod telemetry;
 pub(crate) mod transactions;
 pub(crate) mod usage;
 pub(crate) mod view;

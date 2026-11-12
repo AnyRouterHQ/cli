@@ -41,6 +41,12 @@ pub fn subcommands(command: &str) -> &'static [(&'static str, &'static str)] {
             ("path", "Print the config file path"),
             ("use", "Switch the active account"),
         ],
+        "telemetry" => &[
+            ("status", "On or off, why, and the next payload"),
+            ("on", "Turn anonymous usage pings on"),
+            ("off", "Turn anonymous usage pings off"),
+            ("reset", "Rotate the random install id"),
+        ],
         "completion" => &[
             ("bash", "Bash completion script"),
             ("zsh", "Zsh completion script"),

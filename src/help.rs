@@ -354,6 +354,7 @@ pub fn command_help(command: &str) -> Option<String> {
         ),
         "commands" => commands_help(),
         "schema" => fill(&bin, SCHEMA),
+        "telemetry" => fill(&bin, TELEMETRY),
         "api" => crate::api::help(),
         "publish" => crate::publish::publish_help(),
         "apps" => crate::publish::apps_help(),
@@ -1167,6 +1168,24 @@ Always JSON on stdout (schema anyr.schema/v2). Each entry has name, summary,
 aliases, subcommands, flags ({name, type: bool|string|int|enum, required,
 enum?, env?}), positional args, auth (none|sk|ak), mutating, json and the
 exit codes it can return. An unknown command exits 3.
+";
+
+const TELEMETRY: &str = "{bin} telemetry — anonymous usage pings
+
+Usage:
+  {bin} telemetry [status]            On or off, which switch decided it, the
+                                   install id, the endpoint and the exact
+                                   payload of the next daily ping
+  {bin} telemetry status --dry-run    One sample of every event type
+  {bin} telemetry on | off            Write `telemetry: true|false` in the config
+  {bin} telemetry reset               Rotate the random install id
+
+Also off with ANYR_TELEMETRY=0, ANYR_NO_TELEMETRY=1 or DO_NOT_TRACK=1, and
+always off in CI. Nothing holds a key, a path, a hostname or a prompt.
+
+Options:
+  --dry-run  Print a sample of every event instead of the status
+  --json     JSON on stdout
 ";
 
 const COMPLETION: &str = "{bin} completion — shell completion

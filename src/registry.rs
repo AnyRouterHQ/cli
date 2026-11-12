@@ -117,6 +117,7 @@ pub fn subcommands(canonical: &str) -> &'static [&'static str] {
         ],
         "onboard" => &["impl", "plan", "fix", "deploy", "cp"],
         "completion" => crate::completion::SHELLS,
+        "telemetry" => &["status", "on", "off", "reset"],
         _ => &[],
     }
 }
@@ -382,6 +383,11 @@ pub const SPECS: &[Spec] = &[
     local("completion", &["<shell>"]),
     local("commands", &[]),
     local("schema", &["[command…]"]),
+    local("telemetry", &[]),
+    local("telemetry status", &[]),
+    edit("telemetry on", &[]),
+    edit("telemetry off", &[]),
+    edit("telemetry reset", &[]),
     local("help", &["[topic]"]),
 ];
 
@@ -668,6 +674,7 @@ mod tests {
             "task",
             "delegate",
             "schema",
+            "telemetry",
         ];
         for c in implemented {
             assert_eq!(cmd_kind(c), Some(CmdKind::Implemented), "{c}");

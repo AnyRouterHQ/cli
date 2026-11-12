@@ -668,15 +668,20 @@ the endpoint in its environment), so the first command of a day never
 waits on the network. The exact payload is built in
 [`src/telemetry.rs`](src/telemetry.rs) and checked by `tests/telemetry.rs`.
 
+The first run on a terminal prints one line saying the pings are on and how
+to turn them off; it never prints again, and never off a terminal, under
+`--json` or `--quiet`, or inside an agent `anyr` launched.
+
+`anyr telemetry status` prints whether it is on, which switch decided that,
+the install id, the endpoint and the exact payload of the next daily ping;
+`anyr telemetry status --dry-run` prints a sample of every event.
+`anyr telemetry reset` rotates the install id.
+
 Turn it off with any one of:
 
 ```bash
-export ANYR_NO_TELEMETRY=1   # or DO_NOT_TRACK=1
-```
-
-```yaml
-# ~/.anyrouter/config.yaml
-telemetry: false
+anyr telemetry off          # writes `telemetry: false` to ~/.anyrouter/config.yaml
+export ANYR_TELEMETRY=0     # or ANYR_NO_TELEMETRY=1, or DO_NOT_TRACK=1
 ```
 
 It is also off in CI, in `cargo` builds, and while `ANYR_NO_UPDATE` is set.

@@ -5,18 +5,20 @@
 //! `cli_daily` events answers "how many installs, on which versions, and
 //! how many active users per day". It carries a random install id, the
 //! version, the OS and the CPU architecture. It never carries a key, a
-//! path, a hostname, an IP address, a prompt or a subcommand, and it
-//! asks PostHog not to build a person profile or look up a location.
+//! path, a hostname, an IP address or a prompt, and it asks PostHog not to
+//! build a person profile or look up a location.
 //!
 //! The install and update pings send synchronously (they are rare). The
 //! daily ping is handed to a detached `anyr __telemetry-daily` child that
 //! reads the payload from stdin, so the first command of each day never
 //! waits on the network.
 //!
-//! On by default. Off with `DO_NOT_TRACK=1`, `ANYR_NO_TELEMETRY=1` or
-//! `telemetry: false` in the config file. It also stays off in CI, in dev
-//! builds and when `ANYR_NO_UPDATE` is set (the switch every test uses), and
-//! nothing is written while it is off, not even an install id.
+//! On by default; the first run on a terminal prints one line saying so.
+//! Off with `anyr telemetry off` (`telemetry: false` in the config),
+//! `ANYR_TELEMETRY=0`, `ANYR_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`. It also
+//! stays off in CI, in dev builds and when `ANYR_NO_UPDATE` is set (the
+//! switch every test uses), and nothing is written while it is off, not even
+//! an install id.
 
 use std::collections::BTreeMap;
 
@@ -63,6 +65,8 @@ pub struct State {
     pub last_version: Option<String>,
     /// UTC day index (`now_secs() / SECS_PER_DAY`) of the last ping.
     pub last_daily: Option<u64>,
+    /// The one-line notice was printed on a terminal; it never prints again.
+    pub notice_shown: bool,
 }
 
 impl State {
@@ -80,6 +84,7 @@ impl State {
             install_id: get("install_id"),
             last_version: get("last_version"),
             last_daily: map.get("last_daily").and_then(Value::as_u64),
+            notice_shown: map.get("notice_shown").and_then(Value::as_bool) == Some(true),
         }
     }
 
@@ -88,6 +93,7 @@ impl State {
             "install_id": self.install_id,
             "last_version": self.last_version,
             "last_daily": self.last_daily,
+            "notice_shown": self.notice_shown,
         })
     }
 }
@@ -155,18 +161,38 @@ pub fn otlp_payload(install_id: &str, kind: &Kind, version: &str, os: &str, arch
 
 /// True when the ping may be sent. `config_flag` is the file's `telemetry:`.
 pub fn enabled(env: &BTreeMap<String, String>, config_flag: Option<bool>, dev_build: bool) -> bool {
+    switch(env, config_flag, dev_build).0
+}
+
+/// On or off, and the switch that decided it (what `anyr telemetry status`
+/// prints).
+pub fn switch(
+    env: &BTreeMap<String, String>,
+    config_flag: Option<bool>,
+    dev_build: bool,
+) -> (bool, &'static str) {
     let on = |key: &str| env_flag(env, key) == Some(true);
-    if on("DO_NOT_TRACK")
-        || on("ANYR_NO_TELEMETRY")
-        || on("ANYR_NO_UPDATE")
-        || dev_build
-        || env
-            .get("CI")
-            .is_some_and(|v| !v.trim().is_empty() && env_flag(env, "CI") != Some(false))
+    let off = if env_flag(env, "ANYR_TELEMETRY") == Some(false) {
+        "ANYR_TELEMETRY=0"
+    } else if on("ANYR_NO_TELEMETRY") {
+        "ANYR_NO_TELEMETRY=1"
+    } else if on("DO_NOT_TRACK") {
+        "DO_NOT_TRACK=1"
+    } else if on("ANYR_NO_UPDATE") {
+        "ANYR_NO_UPDATE=1"
+    } else if env
+        .get("CI")
+        .is_some_and(|v| !v.trim().is_empty() && env_flag(env, "CI") != Some(false))
     {
-        return false;
-    }
-    config_flag.unwrap_or(true)
+        "CI"
+    } else if config_flag == Some(false) {
+        "telemetry: false in the config"
+    } else if dev_build {
+        "dev build"
+    } else {
+        return (true, "default");
+    };
+    (false, off)
 }
 
 /// The exact JSON sent to PostHog. Nothing else leaves the machine.
@@ -194,7 +220,7 @@ pub fn payload(install_id: &str, kind: &Kind, version: &str, os: &str, arch: &st
 /// 32 hex chars from the OS random source, mixed with the clock and pid so a
 /// missing `/dev/urandom` (Windows) still yields a distinct id per install.
 #[cfg(feature = "native")]
-fn new_install_id() -> String {
+pub(crate) fn new_install_id() -> String {
     use sha2::{Digest, Sha256};
     use std::io::Read;
     let mut h = Sha256::new();
@@ -221,12 +247,12 @@ fn new_install_id() -> String {
 }
 
 #[cfg(feature = "native")]
-fn state_path(env: &BTreeMap<String, String>) -> PathBuf {
+pub(crate) fn state_path(env: &BTreeMap<String, String>) -> PathBuf {
     crate::autoupdate::state_dir(env).join(STATE_FILE)
 }
 
 #[cfg(feature = "native")]
-fn save(env: &BTreeMap<String, String>, state: &State) {
+pub(crate) fn save(env: &BTreeMap<String, String>, state: &State) {
     let dir = crate::autoupdate::state_dir(env);
     let _ = crate::config::ensure_private_dir(&dir);
     let body = format!("{}\n", state.to_json());
@@ -263,15 +289,22 @@ fn send(url: &str, body: &Value) {
         .send_string(&body.to_string());
 }
 
-/// Runs before every command. Never fails. State is saved before the send,
-/// so a failed send is lost rather than retried on every run. The daily ping
-/// is the exception: it is handed to a detached child, so the command never
-/// waits on the network for it.
+/// What decides telemetry on this run and where it goes.
 #[cfg(feature = "native")]
-pub fn on_startup(env: &BTreeMap<String, String>) {
+pub struct Status {
+    pub on: bool,
+    /// The switch that decided it (`default`, `DO_NOT_TRACK=1`, ...).
+    pub why: &'static str,
+    pub url: String,
+    /// `url` is the OTLP endpoint from `telemetry_endpoint:`.
+    pub otlp: bool,
+}
+
+#[cfg(feature = "native")]
+pub fn status(env: &BTreeMap<String, String>) -> Status {
     let cfg = crate::key::load_config_if_present(&crate::config::resolve_config_path(None, env));
     let config_flag = cfg.as_ref().and_then(|c| c.telemetry);
-    let otlp_ep = cfg.as_ref().and_then(|c| c.telemetry_endpoint.as_deref());
+    let otlp_ep = cfg.and_then(|c| c.telemetry_endpoint);
     let dev_build = is_dev_run(
         std::env::current_exe()
             .map(|exe| crate::autoupdate::is_cargo_target_build(&exe))
@@ -280,45 +313,109 @@ pub fn on_startup(env: &BTreeMap<String, String>) {
     );
     let custom = endpoint(env);
     // A cargo build only stays quiet toward the real PostHog endpoint.
-    if !enabled(
+    let (on, mut why) = switch(
         env,
         config_flag,
         dev_build && custom.is_none() && otlp_ep.is_none(),
-    ) || env.contains_key(crate::autoupdate::ENV_AUTO_CHILD)
-        || env.contains_key(crate::autoupdate::ENV_LAUNCHER_CHILD)
-    {
+    );
+    if on && config_flag == Some(true) {
+        why = "telemetry: true in the config";
+    }
+    let otlp = otlp_ep.is_some();
+    let url = otlp_ep
+        .or(custom)
+        .unwrap_or_else(|| POSTHOG_CAPTURE_URL.to_string());
+    Status { on, why, url, otlp }
+}
+
+/// The state dir while telemetry is on for this run, decided once. The
+/// updater's own detached child never records anything.
+#[cfg(feature = "native")]
+static GATE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+
+#[cfg(feature = "native")]
+fn decide_gate(env: &BTreeMap<String, String>, st: &Status) -> Option<PathBuf> {
+    (st.on && !env.contains_key(crate::autoupdate::ENV_AUTO_CHILD))
+        .then(|| crate::autoupdate::state_dir(env))
+}
+
+/// Where telemetry files go, or `None` while it is off. Every local write
+/// (state, counters, crash files, last error) checks this first.
+#[cfg(feature = "native")]
+pub fn gate(env: &BTreeMap<String, String>) -> Option<&'static std::path::Path> {
+    GATE.get_or_init(|| decide_gate(env, &status(env)))
+        .as_deref()
+}
+
+/// The decision when one was already made; never computes it.
+#[cfg(feature = "native")]
+pub fn gate_if_known() -> Option<&'static std::path::Path> {
+    GATE.get().and_then(|g| g.as_deref())
+}
+
+/// The one-time line on a terminal.
+pub fn notice_line() -> String {
+    format!(
+        "anyr sends anonymous usage pings (no keys, paths or prompts). Turn them off with `{} telemetry off`.",
+        crate::help::invoked_bin()
+    )
+}
+
+#[cfg(feature = "native")]
+pub(crate) fn load_state(env: &BTreeMap<String, String>) -> State {
+    fs::read_to_string(state_path(env))
+        .ok()
+        .map(|raw| State::from_json(&raw))
+        .unwrap_or_default()
+}
+
+/// Runs before every command. Never fails. State is saved before the send,
+/// so a failed send is lost rather than retried on every run. The daily ping
+/// is the exception: it is handed to a detached child, so the command never
+/// waits on the network for it. `quiet` is a run asking for machine output
+/// (`--json`, `--quiet`); it never gets the notice.
+#[cfg(feature = "native")]
+pub fn on_startup(env: &BTreeMap<String, String>, quiet: bool) {
+    let st = status(env);
+    let gate = GATE.get_or_init(|| decide_gate(env, &st));
+    // Inside a session anyr launched, the parent already pinged.
+    if gate.is_none() || env.contains_key(crate::autoupdate::ENV_LAUNCHER_CHILD) {
         return;
     }
     let today = crate::autoupdate::now_secs() / SECS_PER_DAY;
-    let mut state = fs::read_to_string(state_path(env))
-        .ok()
-        .map(|raw| State::from_json(&raw))
-        .unwrap_or_default();
-    let Some(kind) = decide(&state, crate::VERSION, today) else {
-        return;
-    };
-    let id = state.install_id.clone().unwrap_or_else(new_install_id);
-    state.install_id = Some(id.clone());
-    state.last_version = Some(crate::VERSION.to_string());
-    // Any ping sent proves the machine was active today, so it suppresses
-    // the daily ping for the rest of the UTC day.
-    state.last_daily = Some(today);
-    save(env, &state);
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
-    if let Some(url) = otlp_ep {
-        let body = otlp_payload(&id, &kind, crate::VERSION, os, arch);
-        match kind {
-            Kind::Daily => spawn_daily_sender(&body, url),
-            Kind::Install | Kind::Update { .. } => send(url, &body),
-        }
+    let mut state = load_state(env);
+    let notice =
+        !quiet && !state.notice_shown && std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let kind = decide(&state, crate::VERSION, today);
+    if kind.is_none() && !notice {
         return;
     }
-    let url = custom.as_deref().unwrap_or(POSTHOG_CAPTURE_URL);
-    let body = payload(&id, &kind, crate::VERSION, os, arch);
+    if notice {
+        eprintln!("{}", crate::term::dim(&notice_line()));
+        state.notice_shown = true;
+    }
+    let id = state.install_id.clone().unwrap_or_else(new_install_id);
+    state.install_id = Some(id.clone());
+    if kind.is_some() {
+        state.last_version = Some(crate::VERSION.to_string());
+        // Any ping sent proves the machine was active today, so it
+        // suppresses the daily ping for the rest of the UTC day.
+        state.last_daily = Some(today);
+    }
+    save(env, &state);
+    let Some(kind) = kind else {
+        return;
+    };
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    let body = if st.otlp {
+        otlp_payload(&id, &kind, crate::VERSION, os, arch)
+    } else {
+        payload(&id, &kind, crate::VERSION, os, arch)
+    };
     match kind {
-        Kind::Daily => spawn_daily_sender(&body, url),
-        Kind::Install | Kind::Update { .. } => send(url, &body),
+        Kind::Daily => spawn_daily_sender(&body, &st.url),
+        Kind::Install | Kind::Update { .. } => send(&st.url, &body),
     }
 }
 
@@ -406,6 +503,7 @@ mod tests {
         for e in [
             env(&[("DO_NOT_TRACK", "1")]),
             env(&[("ANYR_NO_TELEMETRY", "1")]),
+            env(&[("ANYR_TELEMETRY", "0")]),
             env(&[("ANYR_NO_UPDATE", "1")]),
             env(&[("CI", "true")]),
         ] {
@@ -413,6 +511,29 @@ mod tests {
         }
         assert!(!enabled(&env(&[]), Some(false), false), "config flag");
         assert!(!enabled(&env(&[]), None, true), "dev build");
+    }
+
+    #[test]
+    fn switch_names_the_opt_out_that_won() {
+        assert_eq!(switch(&env(&[]), None, false), (true, "default"));
+        assert_eq!(
+            switch(
+                &env(&[("ANYR_TELEMETRY", "0"), ("DO_NOT_TRACK", "1")]),
+                None,
+                false
+            ),
+            (false, "ANYR_TELEMETRY=0")
+        );
+        assert_eq!(
+            switch(&env(&[]), Some(false), true),
+            (false, "telemetry: false in the config")
+        );
+        // ANYR_TELEMETRY=1 is not an override: DO_NOT_TRACK still wins.
+        assert!(!enabled(
+            &env(&[("ANYR_TELEMETRY", "1"), ("DO_NOT_TRACK", "1")]),
+            None,
+            false
+        ));
     }
 
     #[test]
@@ -433,6 +554,7 @@ mod tests {
             install_id: Some("abc".into()),
             last_version: Some("0.1.39".into()),
             last_daily: Some(100),
+            notice_shown: false,
         };
         assert_eq!(
             decide(&seen, "0.1.40", 100),
@@ -446,6 +568,7 @@ mod tests {
             install_id: None,
             last_version: Some("0.1.39".into()),
             last_daily: None,
+            notice_shown: false,
         };
         assert_eq!(decide(&no_id, "0.1.39", 100), Some(Kind::Install));
     }
@@ -456,6 +579,7 @@ mod tests {
             install_id: Some("abc".into()),
             last_version: Some("0.1.39".into()),
             last_daily: Some(100),
+            notice_shown: false,
         };
         assert_eq!(decide(&seen, "0.1.39", 101), Some(Kind::Daily));
         assert_eq!(decide(&seen, "0.1.39", 102), Some(Kind::Daily));
@@ -464,6 +588,7 @@ mod tests {
             install_id: Some("abc".into()),
             last_version: Some("0.1.39".into()),
             last_daily: None,
+            notice_shown: false,
         };
         assert_eq!(decide(&legacy, "0.1.39", 100), Some(Kind::Daily));
         // Clock skew backwards still counts as "already sent today".
@@ -546,6 +671,7 @@ mod tests {
             install_id: Some("abc".into()),
             last_version: Some("1".into()),
             last_daily: Some(100),
+            notice_shown: false,
         };
         assert_eq!(State::from_json(&s.to_json().to_string()), s);
         assert_eq!(State::from_json("not json"), State::default());

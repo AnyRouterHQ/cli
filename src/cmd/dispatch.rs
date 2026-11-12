@@ -287,7 +287,7 @@ pub(crate) fn cmd_kind(command: &str) -> Option<CmdKind> {
         | "onboard" | "impl" | "plan" | "fix" | "deploy" | "cp" | "relay" | "decision"
         | "commands" | "api" | "completion" | "byok" | "publish" | "apps" | "artifact" | "chat"
         | "logs" | "transactions" | "embed" | "generation" | "presets" | "mcp" | "eval"
-        | "task" | "delegate" | "schema" => CmdKind::Implemented,
+        | "task" | "delegate" | "schema" | "telemetry" => CmdKind::Implemented,
         "cursor" | "cline" | "windsurf" => CmdKind::HelpOnly,
         "audit" | "skills" | "prompt" => CmdKind::Stub,
         _ => return None,
@@ -379,6 +379,7 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
     ("completion", "Shell completion script"),
     ("commands", "Full command map"),
     ("schema", "Typed command map for agents (JSON)"),
+    ("telemetry", "Anonymous usage pings: status, on, off, reset"),
     ("help", "Show help"),
 ];
 
@@ -633,6 +634,7 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
         "publish" => crate::publish::PUBLISH_FLAGS,
         "apps" => crate::publish::APPS_FLAGS,
         "completion" | "schema" => &[],
+        "telemetry" => &["json", "dry-run"],
         "onboard" | "impl" | "plan" | "fix" | "deploy" | "cp" => &["json", "copy"],
         "upgrade" => &[
             "check", "channel", "fixture", "dry-run", "yes", "auto", "force", "beta", "stable",
