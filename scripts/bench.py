@@ -4,15 +4,33 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
-# Soft gate for stripped linux x86_64 release binary (headroom above ~3 MiB).
-LINUX_X86_64_BUDGET_BYTES = 4 * 1024 * 1024
+# Ratchet for the stripped linux x86_64 release binary: the last measured CI
+# size plus 2%. Lower it after each size cut; raise it only on purpose.
+# 3,536,328 bytes at v0.1.44-beta.865.
+LINUX_X86_64_BUDGET_BYTES = 3_607_055
 BUDGET_ASSET = "anyr-linux-x86_64"
+# Median wall time each local command must stay under on the budget asset.
+STARTUP_BUDGET_MS = 5.0
+# Local commands timed on every native binary. The last two run against a
+# throwaway ANYROUTER_HOME with a fake key and make no network call.
+STARTUP_CMDS = (
+    ("startup_version", ["--version"]),
+    ("startup_help", ["--help"]),
+    ("startup_account", ["account", "--json"]),
+    ("startup_dry_run", ["claude", "--dry-run", "--json"]),
+)
+FAKE_CONFIG = (
+    "active_profile: default\nprofiles:\n  default:\n"
+    "    api_key: sk-ar-v1-benchbenchbenchbenchbench0000\n"
+)
 
 
 def human_bytes(n: int) -> str:
@@ -26,15 +44,17 @@ def human_bytes(n: int) -> str:
     return f"{x:.1f} TiB"
 
 
-def time_cmd(cmd: list[str], n: int = 21) -> dict:
+def time_cmd(cmd: list[str], n: int = 21, env: dict | None = None) -> dict:
     samples: list[float] = []
     for i in range(n):
         t0 = time.perf_counter()
         proc = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            env=env,
         )
         ms = (time.perf_counter() - t0) * 1000.0
         if proc.returncode != 0 and i == 0:
@@ -76,8 +96,22 @@ def measure(args: argparse.Namespace) -> None:
         "os": args.os or "",
     }
     if args.kind == "native":
-        record["startup_version"] = time_cmd([bin_cmd, "--version"], n=args.iters)
-        record["startup_help"] = time_cmd([bin_cmd, "--help"], n=args.iters)
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "config.yaml").write_text(FAKE_CONFIG, encoding="utf-8")
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if not k.startswith(("ANYR", "ANYROUTER")) and k != "CI"
+            }
+            env.update(
+                ANYROUTER_HOME=home,
+                HOME=home,
+                USERPROFILE=home,
+                ANYR_NO_UPDATE="1",
+                ANYR_NO_CATALOG="1",
+            )
+            for key, argv in STARTUP_CMDS:
+                record[key] = time_cmd([bin_cmd, *argv], n=args.iters, env=env)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
@@ -112,6 +146,15 @@ def check_budget(rows: list[dict], budget: int = LINUX_X86_64_BUDGET_BYTES) -> l
                 f"{asset} is {human_bytes(nbytes)} ({nbytes} bytes), "
                 f"over budget {human_bytes(budget)} ({budget} bytes)"
             )
+        for key, argv in STARTUP_CMDS:
+            median = (row.get(key) or {}).get("median_ms")
+            if median is None:
+                violations.append(f"{asset} has no `anyr {' '.join(argv)}` timing")
+            elif median > STARTUP_BUDGET_MS:
+                violations.append(
+                    f"{asset} `anyr {' '.join(argv)}` median {median} ms, "
+                    f"over {STARTUP_BUDGET_MS} ms"
+                )
     return violations
 
 
@@ -119,25 +162,28 @@ def to_markdown(rows: list[dict], title: str) -> str:
     lines = [
         f"## {title}",
         "",
-        "Startup is wall time for a cold `anyr --version` / `anyr --help` "
-        "(median of 21 runs). Size is the stripped release binary, or the "
+        "Startup is wall time for a cold local command (median of 21 runs; "
+        "`account --json` and `claude --dry-run --json` use a throwaway home "
+        "and a fake key). Size is the stripped release binary, or the "
         "`.wasm` for the browser demo.",
         "",
         f"**Size budget:** `{BUDGET_ASSET}` must stay ≤ "
         f"{human_bytes(LINUX_X86_64_BUDGET_BYTES)} "
-        f"({LINUX_X86_64_BUDGET_BYTES} bytes) stripped.",
+        f"({LINUX_X86_64_BUDGET_BYTES} bytes) stripped, and each command "
+        f"≤ {STARTUP_BUDGET_MS} ms median.",
         "",
-        "| Asset | Kind | Size | `--version` median | `--help` median |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "| Asset | Kind | Size | `--version` | `--help` | `account --json` "
+        "| `claude --dry-run` |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
-        ver = row.get("startup_version") or {}
-        help_ = row.get("startup_help") or {}
-        ver_s = f"{ver['median_ms']} ms" if "median_ms" in ver else "—"
-        help_s = f"{help_['median_ms']} ms" if "median_ms" in help_ else "—"
+        cells = []
+        for key, _ in STARTUP_CMDS:
+            t = row.get(key) or {}
+            cells.append(f"{t['median_ms']} ms" if "median_ms" in t else "—")
         lines.append(
             f"| `{row.get('asset', '?')}` | {row.get('kind', '?')} | "
-            f"{row.get('size', '?')} | {ver_s} | {help_s} |"
+            f"{row.get('size', '?')} | " + " | ".join(cells) + " |"
         )
     violations = check_budget(rows)
     if violations:

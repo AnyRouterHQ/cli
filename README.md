@@ -516,7 +516,9 @@ On a terminal, bare `anyr` / `anyr menu` opens the Ratatui launcher by default.
 Pipes and CI still get `--help` (or `anyr menu --dump-tui` for a plain frame).
 
 Release size is tracked on every PR (`scripts/bench.py`): stripped
-`anyr-linux-x86_64` must stay ≤ 4.0 MiB. Locally:
+`anyr-linux-x86_64` must stay ≤ 3,607,055 bytes (the last CI size plus 2%),
+and `--version`, `--help`, `account --json` and `claude --dry-run --json` must
+each start in ≤ 5 ms median. Locally:
 
 ```bash
 cargo build --release
