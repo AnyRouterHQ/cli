@@ -516,6 +516,7 @@ pub fn apply_pending(
         state.hint = Some(format!("sudo {} update", crate::help::invoked_bin()));
         return Err(err);
     }
+    crate::crash::crumb("update.apply");
     state.clear_pending();
     state.last_error = None;
     Ok(Some(version))

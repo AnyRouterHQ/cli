@@ -289,6 +289,7 @@ pub fn resolve_base_url(
 }
 
 pub fn load_config_if_present(path: &Path) -> Option<Config> {
+    crate::crash::crumb("config.read");
     if path.exists() {
         read_config(path).ok()
     } else {

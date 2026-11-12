@@ -14,6 +14,7 @@ pub mod commands;
 pub mod completion;
 pub mod config;
 pub mod counters;
+pub mod crash;
 pub mod demo;
 pub mod exit;
 pub mod help;
@@ -28,6 +29,7 @@ pub mod publish;
 pub mod registry;
 #[cfg(feature = "native")]
 pub mod relay;
+pub mod report;
 pub mod schema;
 pub mod spawn;
 pub mod spinner;

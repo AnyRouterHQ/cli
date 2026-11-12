@@ -454,7 +454,10 @@ fn status_shows_the_exact_daily_payload_that_is_then_sent() {
         .iter()
         .map(|e| e["event"].as_str().unwrap())
         .collect();
-    assert_eq!(events, ["cli_install", "cli_update", "cli_daily"]);
+    assert_eq!(
+        events,
+        ["cli_install", "cli_update", "cli_daily", "cli_crash"]
+    );
 }
 
 #[test]
@@ -551,4 +554,105 @@ fn the_notice_prints_once_on_the_first_terminal_run_and_never_under_json() {
     assert!(first.contains("telemetry off"), "{first}");
     let second = pty(&home, &url, &["config", "path"]).unwrap();
     assert!(!second.contains("telemetry off"), "{second}");
+}
+
+fn crash_files(home: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(home.join("anyr").join("crash"))
+        .map(|d| d.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_panic_leaves_a_redacted_crash_file_and_the_next_run_posts_it_once() {
+    // WHY: the crash path is the one place free text (the panic message) is
+    // stored and sent; the secret and path in it must never leave, and one
+    // crash must be one upload.
+    let home = common::unique_temp_dir("anyr-telemetry-crash");
+    let (url, rx) = capture_server();
+    anyr(&home, &url, &[]);
+    rx.recv_timeout(Duration::from_secs(5)).expect("install");
+    let boom = "boom sk-ar-v1-panicsecret0123456789 at /home/alice/secret.txt";
+    let out = anyr_args(
+        &home,
+        &url,
+        &["config", "path"],
+        &[("ANYR_TEST_PANIC", boom)],
+    );
+    assert!(!out.status.success(), "{out:?}");
+    let files = crash_files(&home);
+    assert_eq!(files.len(), 1, "{files:?}");
+    let raw = std::fs::read_to_string(&files[0]).unwrap();
+    assert_eq!(anyr_cli::report::leaks(&raw), None, "{raw}");
+    assert!(
+        !raw.contains("panicsecret") && !raw.contains("alice"),
+        "{raw}"
+    );
+    let rec: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(rec["command"], "config");
+    let location = rec["location"].as_str().unwrap();
+    assert!(
+        location.starts_with("anyr-cli/src/commands.rs:"),
+        "{location}"
+    );
+    assert!(
+        rec["breadcrumbs"]
+            .as_array()
+            .unwrap()
+            .contains(&"config.read".into()),
+        "{raw}"
+    );
+    assert_eq!(rec["sent"], false);
+    let fp = rec["fingerprint"].as_str().unwrap().to_string();
+    assert_eq!(
+        files[0].file_name().unwrap().to_string_lossy(),
+        format!("{fp}.json")
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&files[0]).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    anyr(&home, &url, &[]);
+    let body = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("no cli_crash posted");
+    assert_eq!(body["event"], "cli_crash");
+    assert_eq!(body["properties"]["fingerprint"], fp.as_str());
+    assert_eq!(body["properties"]["message"], rec["message"]);
+    let sent: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&files[0]).unwrap()).unwrap();
+    assert_eq!(sent["sent"], true);
+    anyr(&home, &url, &[]);
+    assert!(
+        rx.recv_timeout(Duration::from_millis(800)).is_err(),
+        "a crash already sent went out again"
+    );
+
+    // The same bug again bumps the count in the same file.
+    let _ = anyr_args(
+        &home,
+        &url,
+        &["config", "path"],
+        &[("ANYR_TEST_PANIC", boom)],
+    );
+    assert_eq!(crash_files(&home).len(), 1);
+    let again: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&files[0]).unwrap()).unwrap();
+    assert_eq!(again["count"], 2);
+}
+
+#[test]
+fn a_panic_while_telemetry_is_off_writes_nothing() {
+    let home = common::unique_temp_dir("anyr-telemetry-crash-off");
+    let (url, _rx) = capture_server();
+    let out = anyr_args(
+        &home,
+        &url,
+        &["config", "path"],
+        &[("ANYR_TEST_PANIC", "boom"), ("DO_NOT_TRACK", "1")],
+    );
+    assert!(!out.status.success());
+    assert!(crash_files(&home).is_empty());
 }

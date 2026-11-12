@@ -1,4 +1,7 @@
 fn main() {
+    // The only work before argument parsing: one panic::set_hook.
+    #[cfg(feature = "native")]
+    anyr_cli::crash::install();
     // Rust ignores SIGPIPE by default, so printing to a closed pipe
     // (`anyr ... | head`) panics. Restore the default so we exit quietly.
     #[cfg(unix)]

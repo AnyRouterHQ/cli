@@ -32,6 +32,7 @@ pub fn join_api(base_url: &str, path: &str) -> String {
 
 #[cfg(feature = "native")]
 fn with_auth(mut req: ureq::Request, api_key: Option<&str>) -> ureq::Request {
+    crate::crash::http_crumb(req.url());
     if let Some(key) = api_key.filter(|k| !k.is_empty()) {
         req = req.set("Authorization", &format!("Bearer {key}"));
     }

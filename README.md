@@ -517,7 +517,7 @@ On a terminal, bare `anyr` / `anyr menu` opens the Ratatui launcher by default.
 Pipes and CI still get `--help` (or `anyr menu --dump-tui` for a plain frame).
 
 Release size is tracked on every PR (`scripts/bench.py`): stripped
-`anyr-linux-x86_64` must stay ≤ 3,607,055 bytes (the last CI size plus 2%),
+`anyr-linux-x86_64` must stay ≤ 3,643,200 bytes (raised on purpose for crash capture),
 and `--version`, `--help`, `account --json` and `claude --dry-run --json` must
 each start in ≤ 5 ms median. Locally:
 
@@ -662,7 +662,8 @@ and daily users, and see which commands fail. PostHog is told not to build a
 person profile or look up a location. The exact payloads are built in
 [`src/telemetry.rs`](src/telemetry.rs) and [`src/counters.rs`](src/counters.rs)
 and checked by `tests/telemetry.rs`; `anyr telemetry status --dry-run` prints
-one of each.
+one of each, and `src/report.rs` holds the one redaction function every
+crash report goes through.
 
 Every event carries a random install id as `distinct_id` (made on this
 machine, not derived from any hardware), the `anyr` version, `os`, `arch`,
@@ -676,6 +677,7 @@ project key (`api_key`, the one the website ships). On top of that:
 | `cli_install` | first run | `method`: `script` (`~/.local/bin`), `npm` (`node_modules` or `~/.anyrouter/binaries`), `brew` or `manual`, a word picked from where the binary lives (never the path) |
 | `cli_update` | first run of a new version | `from_version`, `result`: `ok`, or `rolled_back` when the version went down |
 | `cli_daily` | first run of each UTC day | the counts of the previous days, then deleted from this machine |
+| `cli_crash` | the run after `anyr` crashed, at most 5 a day | the crash report below |
 
 The `cli_daily` counts are kept in `~/.anyrouter/usage.json`, added to once
 when a command exits:
@@ -700,6 +702,27 @@ tokens, arguments or flags, file names or contents, paths, your username or
 hostname, prompts or responses, model ids, repository names, environment
 values or your IP address. A command line that does not parse counts as
 `usage`; `--version` and shell completion are not counted.
+
+When `anyr` panics it saves a crash report to
+`~/.anyrouter/crash/<fingerprint>.json` (owner-only, at most 20 files) and
+the next run sends it as `cli_crash` through the same detached child as the
+daily event, once per bug and version: `fingerprint` (12 hex characters
+naming the bug, the same on every machine; it includes the source line, so a
+code change can give the same bug a new one), `count` (how often it has
+happened on this machine), the command name as above, `location` (the source file and line
+inside `anyr` or a library, such as `anyr-cli/src/commands.rs:42`, never a
+path on your machine), `message` (the panic message after redaction: only
+plain words, numbers and our own host names are kept; keys, tokens, paths,
+file names, flags, quoted text, e-mail addresses, URLs on other hosts, ids,
+host names, IP addresses, your username and hostname are replaced, and it is
+cut at 200 characters) and `breadcrumbs`, the last 16 of a fixed list of steps such as
+`config.read`, `http:/v1/models` (the API route, never the URL) or
+`spawn:agent`. Every field is checked again when the file is read back, so
+editing it cannot add anything. A crash before the arguments are parsed, while
+telemetry is off, or with `telemetry_endpoint:` set (OTLP has no crash form)
+is not saved; `anyr telemetry off` deletes reports not yet sent. When 20
+files exist, a sent one makes room for a new bug. Signals such as a
+segfault or a kill are not caught.
 
 The install and update events are sent while the command runs (they are
 rare). The daily event is handed to a detached child (payload on stdin, only
@@ -726,7 +749,7 @@ export ANYR_TELEMETRY=0     # or ANYR_NO_TELEMETRY=1, or DO_NOT_TRACK=1
 
 It is also off in CI, in `cargo` builds, and while `ANYR_NO_UPDATE` is set.
 While it is off nothing is sent and nothing is written, not even the install
-id or the counts; `anyr telemetry off` also deletes counts not yet sent.
+id, the counts or a crash report; `anyr telemetry off` also deletes counts not yet sent.
 
 ## Documentation
 

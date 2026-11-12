@@ -186,6 +186,17 @@ fn run_inner(argv: Vec<String>, env: &BTreeMap<String, String>) -> i32 {
         }
     }
     let canonical = canonical_command(command);
+    // Test hook for crash capture: a dev build, or one reporting to this
+    // machine, panics here on request, after parsing and the telemetry gate.
+    #[cfg(feature = "native")]
+    if let Some(v) = env
+        .get("ANYR_TEST_PANIC")
+        .filter(|v| !v.is_empty() && *v != "0")
+    {
+        if cfg!(debug_assertions) || crate::telemetry::loopback_endpoint(env) {
+            panic!("test panic: {v}");
+        }
+    }
     let mut parsed = parsed.clone();
     // Login handles `--key` itself (acquire_api_key); `auth login` is the same.
     let own_key_handling = matches!(canonical, "login" | "setup")

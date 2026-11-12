@@ -67,6 +67,9 @@ pub struct State {
     pub last_daily: Option<u64>,
     /// The one-line notice was printed on a terminal; it never prints again.
     pub notice_shown: bool,
+    /// UTC day of the last crash upload and how many went out that day.
+    pub crash_day: Option<u64>,
+    pub crash_sent: u64,
 }
 
 impl State {
@@ -80,11 +83,29 @@ impl State {
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
         };
+        // The file is user-writable and `last_version` rides `cli_update` as
+        // `from_version`: only a version-shaped string may come back.
+        let version_like = |v: &String| {
+            let v = v.strip_prefix('v').unwrap_or(v);
+            let (core, rest) = v.split_at(v.find(['-', '+']).unwrap_or(v.len()));
+            let parts: Vec<&str> = core.split('.').collect();
+            v.len() <= 40
+                && parts.len() == 3
+                && parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c))
+        };
         Self {
-            install_id: get("install_id"),
-            last_version: get("last_version"),
+            install_id: get("install_id")
+                .filter(|id| id.len() <= 64 && id.chars().all(|c| c.is_ascii_hexdigit())),
+            last_version: get("last_version").filter(version_like),
             last_daily: map.get("last_daily").and_then(Value::as_u64),
             notice_shown: map.get("notice_shown").and_then(Value::as_bool) == Some(true),
+            crash_day: map.get("crash_day").and_then(Value::as_u64),
+            crash_sent: map.get("crash_sent").and_then(Value::as_u64).unwrap_or(0),
         }
     }
 
@@ -94,6 +115,8 @@ impl State {
             "last_version": self.last_version,
             "last_daily": self.last_daily,
             "notice_shown": self.notice_shown,
+            "crash_day": self.crash_day,
+            "crash_sent": self.crash_sent,
         })
     }
 }
@@ -318,6 +341,24 @@ pub fn is_dev_run(exe_in_target: bool, env: &BTreeMap<String, String>) -> bool {
     exe_in_target || env.contains_key("CARGO_MANIFEST_DIR")
 }
 
+/// `ANYR_TELEMETRY_URL` points at this machine (a test server).
+pub fn loopback_endpoint(env: &BTreeMap<String, String>) -> bool {
+    let Some(rest) = env
+        .get("ANYR_TELEMETRY_URL")
+        .and_then(|u| u.trim().strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // `[::1]:8080` -> `[::1]`, `127.0.0.1:8080` -> `127.0.0.1`; any `@`
+    // (userinfo) or other host is refused.
+    let host = match authority.rsplit_once(':') {
+        Some((h, port)) if !h.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => authority,
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+}
+
 /// `ANYR_TELEMETRY_URL` points the ping at another endpoint (a test server).
 #[cfg(feature = "native")]
 fn endpoint(env: &BTreeMap<String, String>) -> Option<String> {
@@ -405,7 +446,7 @@ pub fn gate_if_known() -> Option<&'static std::path::Path> {
 /// The one-time line on a terminal.
 pub fn notice_line() -> String {
     format!(
-        "anyr sends anonymous usage pings (no keys, paths or prompts). Turn them off with `{} telemetry off`.",
+        "anyr sends anonymous usage counts and crash reports (no keys, paths or prompts). Turn them off with `{} telemetry off`.",
         crate::help::invoked_bin()
     )
 }
@@ -431,13 +472,73 @@ pub fn on_startup(env: &BTreeMap<String, String>, quiet: bool) {
     if gate.is_none() || env.contains_key(crate::autoupdate::ENV_LAUNCHER_CHILD) {
         return;
     }
+    let Some(dir) = gate.as_deref() else {
+        return;
+    };
     let today = crate::autoupdate::now_secs() / SECS_PER_DAY;
+    // State, counters and crash files change together under one lock, so
+    // two runs at once never send the same crash or day twice.
+    let Some(Some((kind, id, mut detached))) =
+        crate::counters::locked(dir, || prepare(env, &st, dir, quiet, today))
+    else {
+        return;
+    };
+    if let Some(kind) = kind {
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let body = if st.otlp {
+            otlp_payload(&id, &kind.0, crate::VERSION, os, arch)
+        } else {
+            payload(
+                &id,
+                &kind.0,
+                crate::VERSION,
+                os,
+                arch,
+                extra(&kind.0, kind.1.as_ref()),
+            )
+        };
+        match kind.0 {
+            Kind::Daily => detached.insert(0, body),
+            Kind::Install | Kind::Update { .. } => send(&st.url, &body),
+        }
+    }
+    if !detached.is_empty() {
+        spawn_daily_sender(&Value::Array(detached), &st.url);
+    }
+}
+
+/// The locked part of `on_startup`: decide, print the notice, take the
+/// counters and unsent crashes, save the state. `None` when nothing is due.
+#[cfg(feature = "native")]
+#[allow(clippy::type_complexity)]
+fn prepare(
+    env: &BTreeMap<String, String>,
+    st: &Status,
+    dir: &std::path::Path,
+    quiet: bool,
+    today: u64,
+) -> Option<(
+    Option<(Kind, Option<crate::counters::Day>)>,
+    String,
+    Vec<Value>,
+)> {
     let mut state = load_state(env);
     let notice =
         !quiet && !state.notice_shown && std::io::IsTerminal::is_terminal(&std::io::stderr());
     let kind = decide(&state, crate::VERSION, today);
-    if kind.is_none() && !notice {
-        return;
+    // Unsent crash files go out with the next run, at most MAX_PER_DAY a
+    // day. OTLP has no crash form.
+    let crash_dir = crate::crash::dir(dir);
+    let sent_today = if state.crash_day == Some(today) {
+        state.crash_sent
+    } else {
+        0
+    };
+    let room = crate::crash::MAX_PER_DAY.saturating_sub(sent_today);
+    let crashes_waiting = !st.otlp && room > 0 && !crate::crash::files(&crash_dir).is_empty();
+    if kind.is_none() && !notice && !crashes_waiting {
+        return None;
     }
     if notice {
         eprintln!("{}", crate::term::dim(&notice_line()));
@@ -451,36 +552,25 @@ pub fn on_startup(env: &BTreeMap<String, String>, quiet: bool) {
         // suppresses the daily ping for the rest of the UTC day.
         state.last_daily = Some(today);
     }
-    save(env, &state);
-    let Some(kind) = kind else {
-        return;
+    let detached = if crashes_waiting {
+        crate::crash::take_unsent(&crash_dir, &id, room)
+    } else {
+        Vec::new()
     };
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
+    if !detached.is_empty() {
+        state.crash_day = Some(today);
+        state.crash_sent = sent_today + detached.len() as u64;
+    }
     // Yesterday's counters ride the daily ping and leave the file with it;
     // the OTLP form has no field for them, so they are dropped there.
-    let usage = (kind == Kind::Daily)
-        .then(|| {
-            let dir = gate.as_deref()?;
-            crate::counters::locked(dir, || crate::counters::take_before(dir, today))?
-        })
-        .flatten();
-    let body = if st.otlp {
-        otlp_payload(&id, &kind, crate::VERSION, os, arch)
-    } else {
-        payload(
-            &id,
-            &kind,
-            crate::VERSION,
-            os,
-            arch,
-            extra(&kind, usage.as_ref()),
-        )
-    };
-    match kind {
-        Kind::Daily => spawn_daily_sender(&body, &st.url),
-        Kind::Install | Kind::Update { .. } => send(&st.url, &body),
-    }
+    let kind = kind.map(|k| {
+        let usage = (k == Kind::Daily)
+            .then(|| crate::counters::take_before(dir, today))
+            .flatten();
+        (k, usage)
+    });
+    save(env, &state);
+    Some((kind, id, detached))
 }
 
 /// Runs once at process exit: adds this run to today's counters. Nothing
@@ -560,10 +650,16 @@ pub fn send_from_stdin(env: &BTreeMap<String, String>) {
     };
     let mut buf = String::new();
     let _ = std::io::stdin().read_to_string(&mut buf);
-    let Ok(body) = serde_json::from_str::<Value>(buf.trim()) else {
-        return;
-    };
-    send(&url, &body);
+    match serde_json::from_str::<Value>(buf.trim()) {
+        // The daily ping and any crash reports: one POST each, at most six.
+        Ok(Value::Array(bodies)) => {
+            for body in bodies.iter().take(1 + crate::crash::MAX_PER_DAY as usize) {
+                send(&url, body);
+            }
+        }
+        Ok(body) => send(&url, &body),
+        Err(_) => {}
+    }
 }
 
 #[cfg(test)]
@@ -621,6 +717,18 @@ mod tests {
     }
 
     #[test]
+    fn only_a_real_loopback_url_counts_as_loopback() {
+        let lb = |u: &str| loopback_endpoint(&env(&[("ANYR_TELEMETRY_URL", u)]));
+        assert!(lb("http://127.0.0.1:4000/i/v0/e/"));
+        assert!(lb("http://localhost/x"));
+        assert!(lb("http://[::1]:9/"));
+        assert!(!lb("http://localhost.evil.com/"));
+        assert!(!lb("http://127.0.0.1.nip.io/"));
+        assert!(!lb("http://localhost@evil.com/"));
+        assert!(!lb("https://us.i.posthog.com/i/v0/e/"));
+    }
+
+    #[test]
     fn a_binary_copied_out_of_target_under_cargo_test_is_still_a_dev_run() {
         assert!(is_dev_run(true, &env(&[])));
         assert!(is_dev_run(
@@ -639,6 +747,8 @@ mod tests {
             last_version: Some("0.1.39".into()),
             last_daily: Some(100),
             notice_shown: false,
+            crash_day: None,
+            crash_sent: 0,
         };
         assert_eq!(
             decide(&seen, "0.1.40", 100),
@@ -653,6 +763,8 @@ mod tests {
             last_version: Some("0.1.39".into()),
             last_daily: None,
             notice_shown: false,
+            crash_day: None,
+            crash_sent: 0,
         };
         assert_eq!(decide(&no_id, "0.1.39", 100), Some(Kind::Install));
     }
@@ -664,6 +776,8 @@ mod tests {
             last_version: Some("0.1.39".into()),
             last_daily: Some(100),
             notice_shown: false,
+            crash_day: None,
+            crash_sent: 0,
         };
         assert_eq!(decide(&seen, "0.1.39", 101), Some(Kind::Daily));
         assert_eq!(decide(&seen, "0.1.39", 102), Some(Kind::Daily));
@@ -673,6 +787,8 @@ mod tests {
             last_version: Some("0.1.39".into()),
             last_daily: None,
             notice_shown: false,
+            crash_day: None,
+            crash_sent: 0,
         };
         assert_eq!(decide(&legacy, "0.1.39", 100), Some(Kind::Daily));
         // Clock skew backwards still counts as "already sent today".
@@ -807,11 +923,18 @@ mod tests {
     fn state_roundtrips_and_a_bad_file_reads_as_fresh() {
         let s = State {
             install_id: Some("abc".into()),
-            last_version: Some("1".into()),
+            last_version: Some("0.1.44-beta.7".into()),
             last_daily: Some(100),
-            notice_shown: false,
+            notice_shown: true,
+            crash_day: Some(100),
+            crash_sent: 2,
         };
         assert_eq!(State::from_json(&s.to_json().to_string()), s);
+        // `last_version` rides cli_update: anything not version-shaped and
+        // any id that is not hex is dropped on load.
+        let edited = State::from_json(r#"{"install_id":"/home/alice","last_version":"10.0.0.5"}"#);
+        assert_eq!(edited.install_id, None);
+        assert_eq!(edited.last_version, None);
         assert_eq!(State::from_json("not json"), State::default());
         // Files written before the daily ping have no stamp, so daily is due.
         let legacy = State::from_json(r#"{"install_id":"a","last_version":"1"}"#);

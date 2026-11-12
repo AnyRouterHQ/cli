@@ -98,11 +98,21 @@ fn samples(env: &BTreeMap<String, String>) -> Value {
         agent: None,
         bucket: 1,
     });
-    json!({
-        "enabled": st.on,
-        "endpoint": st.url,
-        "events": kinds.iter().map(|k| event(&st, &id, k, Some(&day))).collect::<Vec<_>>(),
-    })
+    let mut events: Vec<Value> = kinds
+        .iter()
+        .map(|k| event(&st, &id, k, Some(&day)))
+        .collect();
+    if !st.otlp {
+        let crash = crate::crash::record(
+            "models",
+            "anyr-cli/src/commands.rs:42",
+            "called `Option::unwrap()` on a `None` value",
+            &["config.read", "http:/v1/models"],
+            crate::VERSION,
+        );
+        events.push(crate::crash::payload(&id, &crash));
+    }
+    json!({ "enabled": st.on, "endpoint": st.url, "events": events })
 }
 
 fn set(env: &BTreeMap<String, String>, on: bool) -> Result<Value, String> {
@@ -114,6 +124,8 @@ fn set(env: &BTreeMap<String, String>, on: bool) -> Result<Value, String> {
         // Counts not yet sent are dropped with the switch, under the lock a
         // run exiting right now writes them with.
         let dir = crate::autoupdate::state_dir(env);
+        // Crash reports not yet sent go too.
+        let _ = std::fs::remove_dir_all(crate::crash::dir(&dir));
         if crate::counters::path(&dir).exists() {
             let _ =
                 crate::counters::locked(&dir, || std::fs::remove_file(crate::counters::path(&dir)));

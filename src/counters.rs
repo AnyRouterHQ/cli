@@ -276,6 +276,7 @@ mod native {
 
     /// A launcher is about to spawn its agent: anyr's own time ends here.
     pub fn spawning(launcher: &str) {
+        crate::crash::crumb("spawn:agent");
         if let Some(id) = intern(
             agent_set(),
             crate::cmd::dispatch::canonical_command(launcher),
