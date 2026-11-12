@@ -1,0 +1,8 @@
+Log out of an AnyRouter account.
+
+Usage:
+  {bin} auth logout [flags]
+
+Removes stored keys for the active account (or --profile).
+
+Also available as `{bin} logout`.

@@ -1,0 +1,47 @@
+{bin} keys — manage API keys
+
+Usage:
+  {bin} keys list [--json]
+  {bin} keys create [name] [--limit USD] [--reset daily|weekly|monthly]
+                        [--endpoints chat,embeddings,...] [--expires 30d] [--quiet]
+                        [--agent <agent>] [--name N --if-missing]
+  {bin} keys set --agent <agent> -
+  {bin} keys unset --agent <agent>
+  {bin} keys show <hash> [--json]
+  {bin} keys update <hash> [--limit USD] [--reset ...] [--endpoints ...] [--expires 30d]
+                           [--disable|--enable]
+  {bin} keys audit [--json]
+  {bin} keys revoke <last4|id|hash> [--yes] [--if-exists]
+
+Idempotent scripts: `keys create --name N --if-missing` prints the existing
+active key named N (metadata, never the secret; created: false) instead of
+minting another. `--if-exists` on revoke (and on `byok rm`, `presets rm`,
+`artifact rm`, `apps rm`) exits 0 with deleted: false when the target is
+already gone.
+
+Scoped keys for CI: `--limit` caps spend in USD, `--reset` sets its window,
+`--endpoints` restricts the key to named endpoints (chat covers chat,
+messages and responses, which share one grant), `--expires` takes 30d, 12h,
+45m or 2w. `--quiet` prints only the secret on stdout and does not save it:
+  KEY=$({bin} keys create ci-bot --limit 5 --quiet)
+Endpoint names: chat, embeddings, moderations, rerank, documents, speech,
+decisions, mcp, me, relay, models, keys, credits, logs, dashboard, trace.
+
+The signed-in API key must have Key Management permission.
+CLI login (`{bin} auth login`) creates a key with full access.
+`keys audit` lists keys that look unused (never used after 7 days, idle 30
+days, or replaced by a newer login on the same device) with the reason. It
+never removes anything; revoke each one yourself.
+
+One key per coding agent: `--agent <agent>` (claude, codex, opencode, grok,
+pi, ...) gives that agent its own key, so its spend, limits and revocation stay
+apart from the rest. `keys create --agent` mints the key in the account that
+agent uses and saves it for that agent (with `--quiet` it still saves, and
+prints only the secret). It refuses while --key or ANYROUTER_API_KEY is set.
+`keys set --agent <agent> -` stores a key you paste on stdin.
+`keys unset --agent <agent>` removes it; the key keeps working until you
+revoke it. `{bin} auth status` shows which key each agent launches with.
+
+A different key on this machine comes from `{bin} login` (a new key named
+`<host> anyr <date>`) or `{bin} login --key -`. After a browser login replaces
+this machine's key, the CLI asks before revoking the old one.

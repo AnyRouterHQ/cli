@@ -3,6 +3,45 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(anyr_foundation_model)");
     println!("cargo:rerun-if-changed=src/foundation_relay.swift");
     compile_foundation_helper();
+    pack_help();
+}
+
+/// Deflate the long help pages (`assets/help/*.txt`) and the agents guide
+/// into `$OUT_DIR/help.bin` as `name\0text\0` pairs; `help::doc` inflates
+/// them on demand.
+fn pack_help() {
+    println!("cargo:rerun-if-changed=assets/help");
+    println!("cargo:rerun-if-changed=docs/agents.md");
+    let mut pages: Vec<(String, String)> = std::fs::read_dir("assets/help")
+        .expect("assets/help")
+        .map(|entry| {
+            let path = entry.expect("assets/help entry").path();
+            let name = path
+                .file_stem()
+                .expect("page name")
+                .to_string_lossy()
+                .into_owned();
+            // Same text as the string literals these pages came from, which
+            // rustc reads with LF endings even from a CRLF checkout.
+            let text = std::fs::read_to_string(&path).expect("help page");
+            (name, text.replace("\r\n", "\n"))
+        })
+        .collect();
+    pages.sort();
+    pages.push((
+        "agents".into(),
+        std::fs::read_to_string("docs/agents.md").expect("docs/agents.md"),
+    ));
+    let mut raw = Vec::new();
+    for (name, text) in &pages {
+        assert!(!text.contains('\0'), "{name}: NUL in a help page");
+        raw.extend_from_slice(name.as_bytes());
+        raw.push(0);
+        raw.extend_from_slice(text.as_bytes());
+        raw.push(0);
+    }
+    let out = std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("help.bin");
+    std::fs::write(out, miniz_oxide::deflate::compress_to_vec(&raw, 10)).expect("write help.bin");
 }
 
 /// Embed the system-model helper on Apple Silicon only. The dylib is bytes

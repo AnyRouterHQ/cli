@@ -1,0 +1,16 @@
+{bin} telemetry — anonymous usage pings
+
+Usage:
+  {bin} telemetry [status]            On or off, which switch decided it, the
+                                   install id, the endpoint and the exact
+                                   payload of the next daily ping
+  {bin} telemetry status --dry-run    One sample of every event type
+  {bin} telemetry on | off            Write `telemetry: true|false` in the config
+  {bin} telemetry reset               Rotate the random install id
+
+Also off with ANYR_TELEMETRY=0, ANYR_NO_TELEMETRY=1 or DO_NOT_TRACK=1, and
+always off in CI. Nothing holds a key, a path, a hostname or a prompt.
+
+Options:
+  --dry-run  Print a sample of every event instead of the status
+  --json     JSON on stdout

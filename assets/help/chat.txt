@@ -1,0 +1,19 @@
+{bin} chat [prompt] [--model ID] [--system TEXT] [--json | --no-stream]
+
+Ask a model through /v1/chat/completions. With a prompt (or piped stdin) it
+answers once; in a terminal with no prompt it opens a REPL (/exit or Ctrl-D).
+
+Input:
+  {bin} chat "Summarise this"            the prompt as words
+  git diff | {bin} chat                     the prompt from stdin
+  git diff | {bin} chat "Review this" -    `-` puts stdin where it stands
+
+Options:
+  --model <id>      Model (default: your default, else anyrouter/auto)
+  --system <text>   System prompt
+  --no-stream       Wait for the whole answer, then print it
+  --json            One JSON object: id, model, content, finish_reason, usage
+                    (`id` works with `{bin} generation <id>`)
+
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.

@@ -1,0 +1,27 @@
+Print current settings. Interactive picker only when asked.
+
+Usage:
+  {bin} config                 Print account / model / agent / credits
+  {bin} config --pick          Open the settings TUI (TTY)
+  {bin} config get [--json]    Same dump; `--json` for scripts
+  {bin} config path            Print the config file path
+  {bin} config use <account>   Switch the active account
+  {bin} config get <key>       Print one setting (exit 1 when unset)
+  {bin} config set <key> <v>   Save one setting
+  {bin} config unset <key>     Clear one setting
+
+Settings:
+  launcher.agent               Agent a bare `{bin}` starts (else the last one)
+  launcher.<agent>.model       Model that agent launches with
+  launcher.<agent>.args        Flags passed to that agent on every launch
+  launcher.<agent>.yolo        Always skip that agent's permission prompts
+  launcher.claude.<tier>       Claude haiku / sonnet / opus / fable model
+  launcher.mcp_auto            false: never wire the MCP gateway in
+  update.auto, update.channel  Auto-update on/off; stable or beta
+
+  {bin} config set launcher.codex.model openai/gpt-5.5
+  {bin} config set launcher.claude.args -- --verbose
+
+Values that start with `-` go after `--`. `{bin} models --pick` chooses a
+model. `--dump-tui` prints one settings frame and exits. Off a terminal the
+dump skips the account lookup and credits; `--verbose` adds them.

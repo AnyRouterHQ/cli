@@ -1,0 +1,13 @@
+{bin} completion — shell completion
+
+Usage:
+  {bin} completion <bash|zsh|fish|powershell>
+
+Install:
+  bash        {bin} completion bash > ~/.local/share/bash-completion/completions/{bin}
+  zsh         {bin} completion zsh > "${fpath[1]}/_{bin}"
+  fish        {bin} completion fish > ~/.config/fish/completions/{bin}.fish
+  powershell  {bin} completion powershell | Out-String | Invoke-Expression
+
+Completes commands, subcommands, flags, `api` resources and verbs,
+--effort / --agent values and account names. Offline; never prompts.

@@ -1,0 +1,35 @@
+Launches the coding agent through AnyRouter (signs in first if needed).
+
+Options:
+  --yes, --ok           Skip confirmation prompts (login / install)
+  --model auto|<id>     Session model. auto / anyrouter/auto; [1m] and [500k] are min-context floors on auto (not catalog SKUs).
+@claude   --haiku <id>          Claude /model haiku and subagents
+@claude   --sonnet <id>         Claude /model sonnet
+@claude   --opus <id>           Claude /model opus
+@claude   --fable <id>          Claude /model fable (also the auto-fallback target)
+  --preset <slug>       Launch with your saved preset (model @preset/<slug>); fails
+                        if it does not exist. Cannot be combined with --model
+@claude   --hub <slug>          Load a hub: sync ~/.anyrouter/hubs + claude --plugin-dir
+  --profile <name>      Use a named profile
+  --command-path <path> Explicit path to the agent executable
+  --install             Install a missing agent without prompting (implied on a TTY)
+  --config <path>       Override the config file path
+  --dry-run             Print the child command and env (secrets redacted);
+                        with --json, the plan as one JSON object
+  --json                anyr's own output as JSON; never sent to the agent
+                        (for the agent's own --json, put it after `--`)
+  --no-mcp              Don't connect the AnyRouter MCP gateway (or its
+                        artifact tools) this launch
+                        (`{bin} mcp auto off` turns it off on this machine)
+  --device              Force the device-code flow (headless / SSH)
+  --device-code         Alias of --device
+  --paste               Force the paste-a-key flow, skipping auto-detection
+
+Portable flags (one name on every agent; anyr passes the agent's own flag):
+{portable}
+Any other flag goes to the agent unchanged and in order, no `--` needed:
+  {bin} {id} --model <id> {example}
+Everything after `--` goes to the agent raw, including flags anyr also owns.
+
+First run with no config auto-detects the best way to sign in — browser first,
+falling back to the device-code flow automatically.

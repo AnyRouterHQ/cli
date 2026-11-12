@@ -1,0 +1,33 @@
+{bin} mcp — wire the AnyRouter MCP gateway into an agent
+
+Usage:
+  {bin} mcp url                      Print the endpoint (https://anyrouter.dev/api/v1/mcp)
+  {bin} mcp add <agent> [--print] [--show-key]
+                                     agent: claude, codex, opencode, cursor
+  {bin} mcp connections              Upstream MCP connections behind the gateway
+
+add claude runs `claude mcp add --transport http anyrouter <url> --header ...`.
+add codex edits ~/.codex/config.toml, add opencode edits
+~/.config/opencode/opencode.json, add cursor edits ~/.cursor/mcp.json. Existing
+content is kept and a second run changes nothing. --print shows the snippet and
+changes nothing.
+
+The snippet reads the key from $ANYROUTER_API_KEY; the key is only printed or
+written with --show-key. Running `add claude` without --print stores the key
+in Claude Code's own config, because that is where the header lives. An API key
+(sk-ar-v1-...) reaches the unscoped tools; use a management key (ak_...) via
+--key for key, credit and preset tools.
+
+Options:
+  --print           Show the snippet, change nothing
+  --show-key        Put the real key in the snippet or file
+  --json            Raw API body (connections) or a result object
+  --profile <name>  Use another account
+
+Examples:
+  {bin} mcp add claude --print
+  {bin} mcp add opencode
+  {bin} mcp connections --json
+
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.

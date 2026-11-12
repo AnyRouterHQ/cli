@@ -1,0 +1,29 @@
+{bin} decision — call the typed Decisions API (not chat)
+
+Usage:
+  {bin} decision --model <id> --state <text|json> --questions <json> [flags]
+  cat request.json | {bin} decision [flags]
+
+Sends a POST request to `/api/v1/decisions` with `model`, `state`, and a
+question object map. Responses contain structured `answers`, not chat text.
+Decision models such as `typesafe/jev`, `fastino/gliner2.5-multi-v1`, and
+`anyrouter/decision` cannot be launched through the chat-agent commands.
+
+Options:
+  --model <id>         Decision model id (required unless stdin supplies it)
+  --state <text|json>  Application state; plain text or JSON object/array
+  --questions <json>   Non-empty question map (noul / choice / score)
+  --stdin              Read and merge a JSON object from stdin
+  --json               Print compact JSON (default: pretty JSON)
+  --key sk-ar-v1-…     Use this key instead of the saved profile
+  --profile <name>     Use a named account/profile
+  --base-url <url>     Override the configured API base URL
+  --config <path>      Override the config file path
+
+Examples:
+  {bin} decision --model typesafe/jev \
+    --state 'Help! My payouts have been failing for 3 days.' \
+    --questions '{"is_urgent":{"type":"noul","instructions":"Is this urgent?"}}'
+
+Aliases:
+  decisions, systemone

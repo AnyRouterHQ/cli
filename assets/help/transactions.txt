@@ -1,0 +1,19 @@
+{bin} transactions — your credit ledger
+
+Usage:
+  {bin} transactions                      Newest first, 20 rows
+  {bin} transactions --type purchase      Filter by type
+  {bin} transactions --limit 100          1 to 100 rows
+
+Columns: date, type, amount (signed, $), balance after (when present), note.
+
+Options:
+  --type <type>     purchase | usage | refund | …
+  --limit <n>       Rows to fetch, 1 to 100
+  --json            Print the raw API body
+  --key <key>       Use this API key (or $ANYROUTER_API_KEY, or the saved login)
+  --profile <name>  Use another account
+
+Examples:
+  {bin} transactions --type purchase
+  {bin} transactions --json | jq '.data[0]'

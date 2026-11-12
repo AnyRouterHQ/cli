@@ -1,0 +1,77 @@
+{bin} relay — serve this machine's local models through https://anyrouter.dev
+
+Runs your local models (fm serve on Apple Silicon, Ollama, LM Studio, …)
+behind one https://anyrouter.dev endpoint. The CLI dials out; no ports open.
+
+Usage:
+  {bin} relay                     status and the next command to run
+  {bin} relay start [--detach]    serve; live status at a terminal, Ctrl-C stops
+  {bin} relay stop                stop the running relay
+  {bin} relay status [--json]     running?, connection, models, requests, tokens, pool
+  {bin} relay logs [--follow] [--lines N]   log of the background relay
+  {bin} relay models [--json]     local models and which ones are served
+  {bin} relay models enable|disable <id>   choose exposed models (saved)
+  {bin} relay models allow-all    expose every detected local model again
+  {bin} relay models auto [on|off]  re-check local servers every 15s (default on)
+  {bin} relay models --devices [--json]     per model: devices, online, pool (all your devices)
+  {bin} relay devices [--json]    your paired devices: id, name, state, models, last seen, pool
+  {bin} relay devices rename <id> <name>    rename a device
+  {bin} relay devices pool <id> on|off      share one device with the pool, or stop
+  {bin} relay devices rm <id> --yes         remove a device (needs --yes; a management key
+                                  ak_… via ANYROUTER_MANAGEMENT_KEY, or sign in)
+  {bin} relay pool [on|off]       show or set pool sharing (saved, updates the device)
+  {bin} relay pair [--name <device>]        pair this device (start pairs too)
+  {bin} relay rename <name>       rename this device (here and in the cloud)
+  {bin} relay unpair [--yes]      remove this device from your account
+  {bin} relay doctor [--json]     check macOS, fm serve, Decider, network and auth
+
+On-device models it detects:
+  apple/foundation-model              macOS 26+, Apple Intelligence on, `fm serve`
+  perplexity/pplx-decider-flash-v1.2  the Decider for Mac app (:8080)
+The first start at a terminal asks which to serve and saves the answer.
+Start launches a chosen server that is installed but not running (`fm serve`,
+or `open -g -a Decider`) and stops it when the relay exits. A server you
+started yourself is used as is and left running.
+
+While the relay runs it re-checks the local servers every 15s and re-advertises
+models that were pulled or removed, without dropping the connection — so an
+`ollama pull`ed model becomes servable without a restart. `relay models auto off`
+freezes the list from connect time. The enable|disable whitelist only controls
+what the relay advertises (what the cloud and the pool know); a locally served
+model is not blocked by it. Join keys (Apple system model) stay advertised while
+fm serve is served.
+
+Start options:
+  --detach               run in the background (log: `{bin} relay logs`)
+  --model <id>           serve this on-device model; repeat for several
+  --all                  serve every on-device model, no checklist
+  --no-pool              do not donate idle capacity to the shared pool
+  --no-launch            do not start `fm serve` or the Decider app; use
+                         only servers that are already running
+  --pool                 donate idle capacity (the default; see
+                         https://anyrouter.dev/pool). Both override
+                         the saved `{bin} relay pool on|off`
+  --target <url>         local base URL; repeat for several (default:
+                         probe fm serve :1976, :8000, Ollama :11434,
+                         LM Studio :1234, Perplexity Decider :8080)
+  --token <rk_…>         pairing token (else $ANYROUTER_RELAY_TOKEN or the
+                         stored relay_token; an sk-ar key also works)
+  --url <wss://…>        relay websocket URL
+  --name <device>        device name (default: this Mac's name, else a random one;
+                         saved after the first start)
+                         One config file = one device: machines sharing it (synced
+                         dotfiles) or two relays under one HOME replace each other.
+  --max-concurrency <n>  concurrent requests advertised to the pool
+  --quiet                print errors only
+  --verbose              show relay transport diagnostics
+
+Live screen keys: p pool on/off, r rescan local servers, q or Ctrl-C quit.
+State lives in the relay/ folder next to your AnyRouter config.
+Exit codes: 0 ok, 1 failure (doctor: a check failed), 2 usage error,
+130 stopped with Ctrl-C.
+
+Examples:
+  {bin} relay start --detach
+  {bin} relay start --model apple/foundation-model --no-pool
+  {bin} relay status --json
+  {bin} relay doctor

@@ -1,0 +1,54 @@
+{bin} upgrade — install the latest CLI from GitHub Releases
+
+Usage:
+  {bin} update [--check] [--beta|--stable] [--channel stable|beta] [--dry-run] [--json]
+  {bin} update --status [--json]   what the background updater last did
+  {bin} update --rollback          put the previous build back
+  {bin} upgrade ...                (alias)
+
+Bare `{bin} update` / `{bin} update --check` keep the config channel.
+Only `--beta` or `--stable` switch the channel and persist it.
+
+Switch channel and update:
+  {bin} update --beta     follow GitHub prereleases (persist + install)
+  {bin} update --stable   follow latest non-prerelease (persist + install)
+
+Auto-update never makes a command wait. At most once a day a command starts
+a background check that downloads the new build beside the binary and
+verifies it against the release checksums (published with the build, so
+they catch a corrupt download, not a tampered release). The next run swaps it in
+and prints `anyr updated A → B`. A running agent keeps its build until you
+start it again. A beta build stays on beta; nothing is ever downgraded.
+On Windows, if a swap is cut off and `{bin}` is missing, rename `.{bin}.exe.old`
+beside it back to `{bin}.exe`.
+
+It stays off in CI, when output is not a terminal, with --json, and inside
+agents {bin} launches. An npm install gets the npm command to run instead. Failures are silent; `{bin} update --status` shows them.
+
+  update:
+    auto: false          in ~/.anyrouter/config.yaml to turn it off
+  channel: beta          follow main (GitHub prereleases)
+  ANYR_NO_AUTO_UPDATE=1  turn it off for this process
+  ANYR_AUTO_UPDATE=1     allow it when output is not a terminal
+  ANYR_CHANNEL=beta      same as channel: in the config file
+
+Channels:
+  stable  (default)  latest non-prerelease
+  beta               every push to main (GitHub prerelease)
+
+Downloads:
+  https://github.com/AnyRouterHQ/cli/releases/download/<tag>/anyr-<os>-<arch>
+
+While installing, a spinner ticks with the from → to versions and channel:
+
+  ⠋ Updating v0.1.11 -> v0.1.99 (stable channel)
+  ✔ Updated to v0.1.99
+
+  Run anyr to start using the new version.
+
+--check reports current vs latest without installing.
+--fixture <path> / ANYR_RELEASES_JSON skips the network (tests / dry-run).
+--channel stable|beta overrides the config file for this run only (does not persist).
+--beta / --stable write channel: into the config, then install that channel.
+If the newest build fails checksum, is missing, or is corrupt, the next
+good release on the same channel is installed instead of aborting.

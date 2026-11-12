@@ -1,0 +1,19 @@
+{bin} embed — embeddings from the terminal
+
+Usage:
+  {bin} embed "hello world"            Default embedding model; dims + first 8 values
+  {bin} embed --model <id> "hello"
+  {bin} embed --file notes.txt           One input per line
+  echo hello | {bin} embed -             Read inputs from stdin, one per line
+  {bin} embed --json "a" "b"           Raw OpenAI-shaped response (all inputs, one request)
+
+Options:
+  --model <id>       Embedding model (default: first embedding model in the catalog)
+  --dimensions <n>   Ask for a shorter vector
+  --file <path>      Add one input per line
+  --json             Print the full response for piping into a vector store
+  --key <key>        Use this API key (or $ANYROUTER_API_KEY, or the saved login)
+  --profile <name>   Use another account
+
+Example:
+  {bin} embed --json hi | jq '.data[0].embedding | length'

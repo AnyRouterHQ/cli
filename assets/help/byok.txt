@@ -1,0 +1,27 @@
+{bin} byok — bring your own provider keys
+
+Usage:
+  {bin} byok [list]                     Keys with a BYOK or DONATED badge
+  {bin} byok add <provider>             Keep the key private to your account
+  {bin} byok add <provider> --donate    Share it with the community pool
+  {bin} byok --donate <provider>        Same as add --donate
+  {bin} byok rm <provider> [--yes]      Delete the saved key (asks on a terminal)
+  {bin} byok test <provider>            One real call with the saved key
+  echo $KEY | {bin} byok test <provider> --key-stdin
+                                        Check a key before saving it
+  {bin} byok providers                  Providers that accept BYOK; ready/donated badge
+
+The key is read from $ANYR_BYOK_KEY, else stdin when piped, else a hidden
+prompt. It is never accepted as an argument and never printed.
+--donate shows the pool terms and asks to confirm; scripts pass --yes.
+Without a terminal and without --yes, --donate exits 6 and sends nothing.
+
+Needs a management key (ak_…) with read:byok and write:byok:
+  export ANYROUTER_MANAGEMENT_KEY=ak_…
+
+Options:
+  --donate          Donate the key to the community pool
+  --yes             Accept the pool terms (add --donate) or confirm rm
+  --key-stdin       test: read the key to check from stdin
+  --json            Print JSON (kind: byok | donated | unknown)
+  --profile <name>  Use another account

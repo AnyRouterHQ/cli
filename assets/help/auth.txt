@@ -1,0 +1,14 @@
+Authenticate with AnyRouter.
+
+Usage:
+  {bin} auth <command> [flags]
+
+Commands:
+  login:       Log in to an AnyRouter account
+  logout:      Log out of an AnyRouter account
+  status:      View authentication status
+  switch:      Switch the active account
+  token:       Print the API key
+
+Options:
+  -h, --help   Show help for command

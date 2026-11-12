@@ -21,6 +21,7 @@ dependencies = [
  "crossterm",
  "idna_adapter",
  "libc",
+ "miniz_oxide",
  "ratatui",
  "serde_json",
  "sha2",

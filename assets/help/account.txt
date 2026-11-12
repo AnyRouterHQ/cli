@@ -1,0 +1,20 @@
+{bin} account — manage multiple accounts
+
+Usage:
+  {bin} account list
+  {bin} account use <name>
+  {bin} account use <name> --agent <agent>
+  {bin} account use --agent <agent> --clear
+  {bin} account add [--yes]
+  {bin} account rename <old> <new>
+  {bin} account remove <name>
+
+Options:
+  --yes            Skip confirmations
+  --agent <id>     Bind this account to a coding agent (claude, codex, opencode,
+                   grok, pi, ...); does not change the session default
+  --clear          With --agent: drop the binding, so the agent uses the active account
+
+An agent's own key (`{bin} keys set --agent`) wins over its account.
+Renaming an account keeps its agents bound; removing one unbinds them.
+`{bin} auth status` shows the key each agent launches with.

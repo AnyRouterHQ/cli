@@ -1,0 +1,20 @@
+{bin} generation — cost, provider and timing of one call
+
+Usage:
+  {bin} generation <id>            Model, provider, status, tokens, cost, latency
+  {bin} gen <id>                   Same, short alias
+
+The id is the response `id` or the `x-anyrouter-generation-id` header
+(`{bin} chat --json` prints it too).
+
+Options:
+  --json            Print the raw API body
+  --key <key>       Use this API key (or $ANYROUTER_API_KEY, or the saved login)
+  --profile <name>  Use another account
+
+Examples:
+  {bin} generation gen_abc123
+  {bin} gen gen_abc123 --json | jq .total_cost
+
+Exit codes: 0 ok, 1 error, 2 usage, 3 unknown id, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.

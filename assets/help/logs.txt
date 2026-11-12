@@ -1,0 +1,18 @@
+{bin} logs — recent requests and failures
+
+Usage:
+  {bin} logs                       Latest 20 requests, newest first
+  {bin} logs <id>                  One request in detail
+  {bin} logs sessions              Requests grouped by session
+
+Options:
+  --limit <n>       Rows to fetch, 1 to 100
+  --status <s>      ok | error
+  --model <id>      Only this model
+  --json            Print the raw API body
+  --key <key>       Use this API key (or $ANYROUTER_API_KEY, or the saved login)
+  --profile <name>  Use another account
+
+Examples:
+  {bin} logs --status error --limit 50
+  {bin} logs --json --status error | jq '.data | length'

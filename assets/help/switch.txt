@@ -1,0 +1,8 @@
+Switch the active AnyRouter account.
+
+Usage:
+  {bin} auth switch [<account>]
+
+With no account on a TTY, pick from stored accounts.
+
+Also available as `{bin} account use <account>`.

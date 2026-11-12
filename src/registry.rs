@@ -597,7 +597,7 @@ pub fn schema(path: &[String]) -> Result<Value, String> {
 /// `anyr help agents`: how a coding agent should drive the CLI. Source of
 /// truth is `docs/agents.md` in this repo.
 pub fn agents_guide() -> String {
-    include_str!("../docs/agents.md").replace("anyr ", &format!("{} ", crate::help::invoked_bin()))
+    crate::help::doc("agents").replace("anyr ", &format!("{} ", crate::help::invoked_bin()))
 }
 
 #[cfg(test)]

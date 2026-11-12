@@ -1,0 +1,18 @@
+View authentication status.
+
+Usage:
+  {bin} auth status [flags]
+
+Shows who is signed in (name and email), the account, the masked key and
+the default model. Agents with their own key or account get one line each:
+the masked key they launch with and where it comes from (agent key, agent
+account, account, ANYROUTER_API_KEY or --key). In a terminal it then offers
+to switch account, change the default model, log out or open the dashboard.
+
+Options:
+  --json       Print as JSON: account, user, key_masked, default_model, agents,
+               config_path, base_url (identity_error if the lookup failed)
+  --profile    Use a named account
+  --verbose    Print the full error on stderr when a lookup failed
+
+Also available as `{bin} whoami`.

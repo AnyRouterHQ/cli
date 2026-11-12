@@ -1,0 +1,9 @@
+{bin} usage — credits remaining, 24h spend, top models
+
+Usage:
+  {bin} usage [options]
+
+Options:
+  --json            Print as JSON
+  --key sk-ar-v1-…  Use this key instead of the saved profile
+  --profile <name>  Use a named profile

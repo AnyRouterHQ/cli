@@ -1,0 +1,20 @@
+{bin} pool — shared-pool health (no key needed)
+
+Usage:
+  {bin} pool stats             Providers, keys, donors, requests today, free coverage
+  {bin} pool providers         Per provider: keys, donors, recent masked donors
+  {bin} pool free              Backends the pool can serve for free right now
+  {bin} pool relay             On-device relay pool: online devices and models
+
+Options:
+  --json            Print the raw API body (stats prints all three bodies in one object)
+  --profile <name>  Use another account
+  --base-url <url>  Use another API host
+
+Examples:
+  {bin} pool stats
+  {bin} pool providers --json | jq '.providers[].key_count'
+
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.
+Without a subcommand, `{bin} pool` launches Poolside (below).

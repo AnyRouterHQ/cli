@@ -1,0 +1,10 @@
+{bin} schema — typed command map for agents (JSON)
+
+Usage:
+  {bin} schema                  Every command and subcommand
+  {bin} schema <command> [sub]  One entry, e.g. {bin} schema keys create
+
+Always JSON on stdout (schema anyr.schema/v2). Each entry has name, summary,
+aliases, subcommands, flags ({name, type: bool|string|int|enum, required,
+enum?, env?}), positional args, auth (none|sk|ak), mutating, json and the
+exit codes it can return. An unknown command exits 3.

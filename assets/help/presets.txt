@@ -1,0 +1,31 @@
+{bin} presets — saved routing presets
+
+Usage:
+  {bin} presets [list]             Slug, name, models, routing
+  {bin} presets show <slug>        One preset in full
+  {bin} presets create <slug> --model a,b [--fallback] [--sort price]
+  {bin} presets edit <slug> [--model a,b] [--fallback] [--sort <by>] [--name <n>]
+  {bin} presets rm <slug> --yes    Delete a preset
+  {bin} claude --preset <slug>     Launch an agent with model @preset/<slug>
+
+--model takes models in order: the first is primary, the rest are the fallback
+chain. --fallback also allows falling back to paid models. --sort is one of
+price, throughput, latency, exacto. --description <text> sets a description.
+
+Presets need a management key (ak_…), not an API key. Create one at
+https://anyrouter.dev/settings/management-keys with read:presets and
+write:presets, then `export ANYROUTER_MANAGEMENT_KEY=ak_…` (or pass --key ak_…).
+`--preset` at launch checks the preset exists first and starts nothing if not.
+
+Options:
+  --json            Print the raw API body
+  --yes             Confirm rm in a script
+  --profile <name>  Use another account
+
+Examples:
+  {bin} presets create coding --model z-ai/glm-4.7,qwen/qwen3-coder --fallback --sort price
+  {bin} presets edit coding --model z-ai/glm-4.7,qwen/qwen3-coder,openai/gpt-5
+  {bin} claude --preset coding
+
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.

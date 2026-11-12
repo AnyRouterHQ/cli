@@ -1,0 +1,41 @@
+{bin} artifact — publish a page or folder to a shareable URL
+
+Usage:
+  {bin} artifact publish <file|dir> [options]   Print the artifact URL
+  {bin} artifact ls [--limit N] [--cursor C|--all]  List your artifacts (one page, or all)
+  {bin} artifact rm <id>                        Delete one (asks first)
+  {bin} artifact visibility <id> <v>            private | unlisted | public
+  {bin} artifact visibility <id> --show-author  Show or hide your name on the page
+  {bin} artifact visibility <id> --owner-data   Show or hide your usage on the page
+
+A file (html or md) is sent inline. A folder is uploaded file by file;
+dotfiles, node_modules and .git are skipped. Limits: 5 MB for a single
+file; a folder takes 200 files and 100 MB per publish. The per-file cap
+depends on your plan: 10 MB Free, 25 MB Go, 50 MB Pro, and 5 MB for a
+page or source file on every plan.
+
+Options:
+  --title <text>       Page title
+  --visibility <v>     private (default) | unlisted | public
+                       private links open only for you; unlisted to share
+  --id <id>            Publish a new version of an existing artifact
+  --label <text>       Version label (with --id)
+  --show-author        Show your profile name on the page (default: hidden)
+  --no-show-author     Hide your name again
+  --owner-data         Show your usage on the page (capabilities.owner_data).
+                       Turning it on needs a signed-in session or an ak_
+                       management key; with an API key the server refuses
+                       and the dashboard artifact settings are the way on.
+                       When the page is unlisted or public, anyone with the
+                       link sees your usage.
+  --no-owner-data      Hide your usage again
+  --limit <n>          ls: rows per page, 1 to 100
+  --cursor <c>         ls: continue from a next_cursor
+  --all                ls: follow every page (with --json, one merged result)
+  --yes                Skip confirmation (public, rm)
+  --json               Print the server response instead of the URL
+
+A version conflict (someone published first) exits 2 and prints the
+current version. A file edited while it uploads fails with exit 1 and
+commits nothing. Exit codes: 0 ok, 1 error, 2 usage or conflict,
+3 not found, 4 auth.

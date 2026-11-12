@@ -1,0 +1,11 @@
+Print the API key stored for the active account.
+
+Usage:
+  {bin} auth token [flags]
+
+Prints the full secret to stdout (for scripts). Use --masked in a log.
+
+Options:
+  --masked     Print a redacted key
+  --json       Print as JSON
+  --profile    Use a named account
