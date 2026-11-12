@@ -503,6 +503,7 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             "This machine cannot fetch another key's secret. Get a fresh key: {bin} login, or paste one copied from the dashboard: {bin} login --key -",
         )),
         "audit" => run_keys_audit(parsed, env),
+        "rotate" => run_keys_rotate(parsed, env),
         "revoke" | "rm" | "delete" => {
             let hash = parsed.passthrough.get(1).cloned().ok_or_else(|| {
                 hint("Usage: {bin} keys revoke <last4|id|hash>   (find keys: {bin} keys list)")
@@ -543,9 +544,142 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             Ok(0)
         }
         other => Err(crate::cmd::dispatch::hint(&format!(
-            "Unknown keys subcommand \"{other}\". Try: list | create | set | unset | show | update | audit | revoke"
+            "Unknown keys subcommand \"{other}\". Try: list | create | set | unset | show | update | audit | rotate | revoke"
         ))),
     }
+}
+
+/// The server's key hash: SHA-256 of the secret, lower-case hex.
+fn key_hash(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(key.as_bytes()))
+}
+
+/// Point every stored copy of the key whose hash is `hash` (a profile's key or
+/// an agent's own key) at `new`. Returns where each copy was.
+fn replace_stored_key(cfg: &mut Config, hash: &str, new: &str) -> Vec<String> {
+    let mut hits = Vec::new();
+    let profiles = cfg
+        .profiles
+        .iter_mut()
+        .map(|(n, p)| (format!("account {n}"), &mut p.api_key));
+    let agents = cfg
+        .agents
+        .iter_mut()
+        .map(|(n, b)| (format!("agent {n}"), &mut b.api_key));
+    for (place, slot) in profiles.chain(agents) {
+        if slot.as_deref().is_some_and(|k| key_hash(k.trim()) == hash) {
+            *slot = Some(new.to_string());
+            hits.push(place);
+        }
+    }
+    hits
+}
+
+/// `keys rotate`: a new secret for an existing key (same id, name, limits and
+/// spend). The old secret stops working at once, so every copy stored in
+/// config.yaml is replaced. Needs a management key with write:llm-keys.
+fn run_keys_rotate(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, String> {
+    let needle = parsed.passthrough.get(1).cloned().ok_or_else(|| {
+        hint("Usage: {bin} keys rotate <last4|id|hash> [--yes]   (find keys: {bin} keys list)")
+    })?;
+    crate::api::require_yes_off_tty(parsed, &format!("Rotate key {needle}?"))?;
+    let (path, _cfg, base, cred) = keys_credential(parsed, env)?;
+    let mut mctx = crate::api::management_ctx(
+        &crate::api::context(parsed, env),
+        "key rotations",
+        "write:llm-keys",
+    )?;
+    mctx.base = base.clone();
+    let row = resolve_key(&fetch_keys(&base, &cred)?, &needle)?;
+    if !parsed.skip_confirm()
+        && !term::confirm(&format!(
+            "Rotate \"{}\" ({})? Its current secret stops working now.",
+            row.name,
+            short_ref(&row)
+        ))
+    {
+        return Ok(1);
+    }
+    let check = |why: &str| {
+        format!(
+            "{why} The key may already be rotated, and its old secret dead. Check: {} keys list",
+            crate::help::invoked_bin()
+        )
+    };
+    let rotated = send(
+        &mctx,
+        "POST",
+        &format!("/v1/keys/{}/rotate", row.hash),
+        Some("{}"),
+        true,
+    )
+    .map_err(
+        |e| match crate::exit::refine(crate::exit::classify(&e).0, &e) {
+            crate::exit::NETWORK => format!("{e}\n{}", check("The rotate request got no answer.")),
+            _ => e,
+        },
+    )?;
+    let key = rotated
+        .get("key")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| check("The rotate response did not include the new secret."))?
+        .to_string();
+    let hash = key_hash(&key);
+    // Save before printing: config.yaml is replaced atomically, and a stdout
+    // that closes early must not leave the new secret both unshown and unsaved.
+    let mut cfg = load_config_if_present(&path);
+    let stored = cfg
+        .as_mut()
+        .map(|c| replace_stored_key(c, &row.hash, &key))
+        .unwrap_or_default();
+    let save_err = match (&cfg, stored.is_empty()) {
+        (Some(c), false) => write_config(c, &path).err(),
+        _ => None,
+    };
+    if parsed.flag_true("json") {
+        let body = serde_json::json!({
+            "name": row.name,
+            "hash": hash,
+            "key": key,
+            "stored": stored,
+            "saved": !stored.is_empty() && save_err.is_none(),
+            "rotated": true,
+        });
+        crate::cmd::view::print_json(&body);
+    } else if parsed.flag_true("quiet") {
+        println!("{key}");
+    } else {
+        println!(
+            "Rotated \"{}\":\n\n  {key}\n\nShown once — store it now. The old secret no longer works.",
+            row.name
+        );
+    }
+    if let Some(err) = save_err {
+        return Err(format!(
+            "The key above was not saved to config.yaml ({}): {err}",
+            stored.join(", ")
+        ));
+    }
+    if !parsed.flag_true("json") && !parsed.flag_true("quiet") && !stored.is_empty() {
+        println!(
+            "{}  {} now uses the new key",
+            term::ok("Saved"),
+            stored.join(", ")
+        );
+    }
+    // A key from --key or ANYROUTER_API_KEY beats config.yaml and cannot be
+    // updated from here.
+    let outside =
+        get_string_flag(&parsed.flags, "key").or_else(|| env.get("ANYROUTER_API_KEY").cloned());
+    if outside.is_some_and(|k| key_hash(k.trim()) == row.hash) {
+        eprintln!(
+            "{}",
+            term::dim("--key or ANYROUTER_API_KEY holds the old secret, which no longer works; replace it with the new key.")
+        );
+    }
+    Ok(0)
 }
 
 fn run_keys_audit(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, String> {

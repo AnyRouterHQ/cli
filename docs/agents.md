@@ -40,7 +40,8 @@ Exit codes
 
 Auth
   ANYROUTER_API_KEY=sk-ar-v1-…  Inference key; no login needed
-  ANYROUTER_MANAGEMENT_KEY=ak_… Needed for presets, byok and device removal
+  ANYROUTER_MANAGEMENT_KEY=ak_… Needed for presets, byok, device removal
+                                and keys rotate
   anyr whoami --json            Check which account a key belongs to
 
 Ask a model

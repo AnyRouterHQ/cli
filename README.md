@@ -220,6 +220,7 @@ anyr keys create ci-bot --limit 25 --reset monthly --endpoints chat,embeddings -
 KEY=$(anyr keys create ci-bot --limit 5 --quiet)   # secret only on stdout, not saved
 anyr keys update <hash> --limit 50 --disable       # --enable turns it back on
 anyr keys show <hash>                              # limit, spent, endpoints, expiry
+anyr keys rotate <last4> --yes                     # new secret, shown once; old one stops working
 ```
 
 `--limit` is a USD cap, `--reset` its window (daily, weekly, monthly),
@@ -227,6 +228,9 @@ anyr keys show <hash>                              # limit, spent, endpoints, ex
 embeddings, moderations, rerank, documents, speech, decisions, mcp, me, relay,
 models, keys, credits, logs, dashboard, trace). `chat`, `messages` and
 `responses` share one grant on the server, so each covers all three.
+`keys rotate` keeps the key's id, name, limits and spend, replaces every copy
+of the old secret stored in `config.yaml`, and needs a management key with
+`write:llm-keys` (`ANYROUTER_MANAGEMENT_KEY`).
 
 ### Request logs: `anyr logs`
 

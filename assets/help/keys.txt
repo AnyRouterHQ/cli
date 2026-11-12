@@ -11,6 +11,7 @@ Usage:
   {bin} keys update <hash> [--limit USD] [--reset ...] [--endpoints ...] [--expires 30d]
                            [--disable|--enable]
   {bin} keys audit [--json]
+  {bin} keys rotate <last4|id|hash> [--yes] [--json|--quiet]
   {bin} keys revoke <last4|id|hash> [--yes] [--if-exists]
 
 Idempotent scripts: `keys create --name N --if-missing` prints the existing
@@ -41,6 +42,13 @@ prints only the secret). It refuses while --key or ANYROUTER_API_KEY is set.
 `keys set --agent <agent> -` stores a key you paste on stdin.
 `keys unset --agent <agent>` removes it; the key keeps working until you
 revoke it. `{bin} auth status` shows which key each agent launches with.
+
+`keys rotate` gives a key a new secret and keeps its id, name, limits and
+spend. The old secret stops working at once. The new one is shown once
+(`--json` returns it as `key`), and every copy stored in config.yaml (an
+account's key or an agent's own key) is replaced. It needs a management key
+with write:llm-keys: ANYROUTER_MANAGEMENT_KEY=ak_… or the account's
+management_key. Off a terminal it needs --yes.
 
 A different key on this machine comes from `{bin} login` (a new key named
 `<host> anyr <date>`) or `{bin} login --key -`. After a browser login replaces

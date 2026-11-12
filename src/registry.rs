@@ -49,7 +49,7 @@ pub const ENV: &[(&str, &str)] = &[
     ),
     (
         "ANYROUTER_MANAGEMENT_KEY",
-        "Management key (ak_…) for presets, byok and device removal",
+        "Management key (ak_…) for presets, byok, keys rotate and device removal",
     ),
     ("ANYROUTER_PROFILE", "Use another saved account"),
     ("ANYR_OUTPUT", "json: same as --json on every command"),
@@ -88,7 +88,7 @@ pub fn subcommands(canonical: &str) -> &'static [&'static str] {
         "account" => &["list", "use", "add", "rename", "remove"],
         "models" => &["list", "show", "use"],
         "keys" => &[
-            "list", "create", "set", "unset", "show", "update", "audit", "revoke",
+            "list", "create", "set", "unset", "show", "update", "audit", "rotate", "revoke",
         ],
         "byok" => &["list", "add", "rm", "test", "providers"],
         "presets" => &["list", "show", "create", "edit", "rm"],
@@ -336,6 +336,7 @@ pub const SPECS: &[Spec] = &[
     edit("keys unset", &["<agent>"]),
     read("keys show", Sk, &["<last4|id|hash>"]),
     write("keys update", Sk, &["<last4|id|hash>"]),
+    guarded("keys rotate", Ak, &["<last4|id|hash>"]),
     guarded("keys revoke", Sk, &["<last4|id|hash>"]),
     read("byok", Ak, &[]),
     guarded("byok add", Ak, &["<provider>"]),

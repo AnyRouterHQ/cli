@@ -34,6 +34,7 @@ pub fn subcommands(command: &str) -> &'static [(&'static str, &'static str)] {
             ("show", "Limit, spent, endpoints and expiry of a key"),
             ("update", "Change a key's limit, endpoints, expiry or state"),
             ("audit", "List keys that look unused"),
+            ("rotate", "New secret for a key; the old one stops working"),
             ("revoke", "Revoke an API key"),
         ],
         "config" => &[
