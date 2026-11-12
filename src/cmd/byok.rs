@@ -429,10 +429,11 @@ Pipe it on stdin, set {KEY_ENV}, or enter it at the prompt."
     }
     let yes = parsed.flag_true("yes");
     // Usage checks before any read or request: a donation needs consent.
-    if donate && !yes && !term::is_interactive() {
-        return Err(usage(
-            "donating needs confirmation; re-run on a terminal or pass --yes to accept the pool terms",
-        ));
+    if donate {
+        crate::api::require_yes_off_tty(
+            parsed,
+            "Donating a key shares it with the community pool; it needs your consent.",
+        )?;
     }
     let ctx = mgmt_ctx(parsed, env)?;
     let secret = read_key(env)?;
@@ -443,11 +444,6 @@ Pipe it on stdin, set {KEY_ENV}, or enter it at the prompt."
     }
     if donate {
         eprintln!("{}\n", POOL_CONSENT_TEXT);
-        if !yes && !term::is_interactive() {
-            return Err(usage(
-                "donating a key asks for consent; pass --yes when not at a terminal",
-            ));
-        }
         if !yes
             && !term::confirm(&format!(
                 "Donate this {provider} key to the community pool?"

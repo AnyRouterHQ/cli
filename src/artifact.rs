@@ -135,8 +135,9 @@ fn run_inner(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32,
     match outcome {
         Ok(()) => Ok(0),
         Err(f) => {
-            crate::exit::print(f.code, &f.message);
-            Ok(f.code)
+            let code = crate::exit::refine(f.code, &f.message);
+            crate::exit::print(code, &f.message);
+            Ok(code)
         }
     }
 }
@@ -465,7 +466,7 @@ fn remove(ctx: &Ctx, parsed: &ParsedArgs, id: &str) -> Res<()> {
         parsed,
         &format!("Delete artifact {id}? Its URL stops working."),
     )
-    .map_err(|e| Fail::new(2, strip_usage(&e)))?;
+    .map_err(|e| confirm_fail(&e))?;
     call(ctx, "DELETE", &format!("/v1/artifacts/{id}"), None)?;
     if ctx.json {
         println!("{}", json!({ "id": id, "deleted": true }));
@@ -534,7 +535,16 @@ fn set_visibility(ctx: &Ctx, parsed: &ParsedArgs, id: &str, v: Option<&str>) -> 
 }
 
 fn confirm_public(parsed: &ParsedArgs, question: &str) -> Res<()> {
-    confirm(parsed, question).map_err(|e| Fail::new(2, strip_usage(&e)))
+    confirm(parsed, question).map_err(|e| confirm_fail(&e))
+}
+
+/// A refused confirmation keeps its exit code (6 off a terminal); a "no" at
+/// the prompt exits 2, as before.
+fn confirm_fail(e: &str) -> Fail {
+    match crate::exit::classify(e) {
+        (crate::exit::ERROR, message) => Fail::new(2, message),
+        (code, message) => Fail::new(code, message),
+    }
 }
 
 fn current_version(ctx: &Ctx, id: &str) -> Res<u64> {
@@ -703,10 +713,6 @@ fn checked_id(id: &str) -> Res<String> {
 
 fn usage(message: impl Into<String>) -> Fail {
     Fail::new(2, format!("{} {}", term::err("error:"), message.into()))
-}
-
-fn strip_usage(e: &str) -> String {
-    e.strip_prefix(USAGE).unwrap_or(e).to_string()
 }
 
 /// Walk a folder in sorted order, skipping dotfiles, `node_modules` and

@@ -43,9 +43,22 @@ fn with_auth(mut req: ureq::Request, api_key: Option<&str>) -> ureq::Request {
 /// repeats itself ("Network Error: Network Error: …"); name the cause once.
 #[cfg(feature = "native")]
 fn unreachable(service: &str, err: &ureq::Error) -> String {
+    crate::exit::set_request_id(None);
     let ureq::Error::Transport(t) = err else {
         return format!("Could not reach {service}: {err}");
     };
+    // A bad URL, scheme or proxy setting never reaches the network; it is
+    // not a network failure (exit 7) and retrying cannot fix it.
+    if matches!(
+        t.kind(),
+        ureq::ErrorKind::InvalidUrl
+            | ureq::ErrorKind::UnknownScheme
+            | ureq::ErrorKind::InvalidProxyUrl
+            | ureq::ErrorKind::InsecureRequestHttpsOnly
+            | ureq::ErrorKind::TooManyRedirects
+    ) {
+        return format!("Could not call {service}: {err}");
+    }
     let full = err.to_string();
     // Windows reports a read timeout as WSAETIMEDOUT (10060) with its own wording.
     let reason =
@@ -75,8 +88,25 @@ fn unreachable(service: &str, err: &ureq::Error) -> String {
     }
 }
 
+/// Keep a failed response's request id for the error envelope; forget it on
+/// success so it never labels an unrelated error.
+#[cfg(feature = "native")]
+fn note_request_id(resp: &ureq::Response) {
+    let id = (!(200..300).contains(&resp.status()))
+        .then(|| {
+            resp.header("x-request-id")
+                .or_else(|| resp.header("cf-ray"))
+        })
+        .flatten()
+        .map(str::to_string);
+    crate::exit::set_request_id(id);
+}
+
 #[cfg(feature = "native")]
 fn into_status_body(result: Result<ureq::Response, ureq::Error>) -> Result<(u16, String), String> {
+    if let Ok(resp) | Err(ureq::Error::Status(_, resp)) = &result {
+        note_request_id(resp);
+    }
     match result {
         Ok(resp) => {
             let status = resp.status();
@@ -111,6 +141,9 @@ fn into_status_body_labeled(
     result: Result<ureq::Response, ureq::Error>,
     service: &str,
 ) -> Result<(u16, String), String> {
+    if let Ok(resp) | Err(ureq::Error::Status(_, resp)) = &result {
+        note_request_id(resp);
+    }
     match result {
         Ok(resp) => {
             let status = resp.status();
@@ -198,6 +231,7 @@ pub fn http_post_stream_headers(
         Err(ureq::Error::Status(_, resp)) => resp,
         Err(err) => return Err(unreachable("AnyRouter", &err)),
     };
+    note_request_id(&resp);
     let status = resp.status();
     let headers = resp
         .headers_names()
@@ -263,6 +297,7 @@ pub fn http_post_json_headers(
         Err(ureq::Error::Status(_, r)) => r,
         Err(err) => return Err(unreachable("AnyRouter", &err)),
     };
+    note_request_id(&resp);
     let status = resp.status();
     let headers = resp
         .headers_names()
@@ -781,6 +816,9 @@ fn fmt_context_length(n: Option<i64>) -> String {
 /// Marker in errors from a restricted key; `commands::run` maps it to exit 4.
 pub const SCOPE_ERROR: &str = "this key lacks scope";
 
+/// How every request that got no HTTP answer starts (`exit::refine` → 7).
+pub const UNREACHABLE: &str = "Could not reach ";
+
 /// Clear message for a 401/403 on an endpoint the key is not allowed to call.
 pub fn scope_error(scope: &str) -> String {
     crate::exit::tag(
@@ -799,7 +837,10 @@ pub fn fetch_credits(base_url: &str, api_key: &str) -> Result<serde_json::Value,
         return Err(scope_error("credits"));
     }
     if !(200..300).contains(&status) {
-        return Err(format!("Could not fetch usage (HTTP {status})."));
+        return Err(crate::exit::tag(
+            crate::exit::for_status(status),
+            format!("Could not fetch usage (HTTP {status})."),
+        ));
     }
     serde_json::from_str(&body).map_err(|e| format!("Invalid credits response: {e}"))
 }

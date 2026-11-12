@@ -233,7 +233,7 @@ fn public_needs_yes_when_not_interactive_and_sends_visibility_with_it() {
     let (base, _rx) = serve(vec![(200, SCHEMA)]);
     let cmd = cli(&base, &["publish", "demo", "-", "--visibility", "public"]);
     let (code, _, err) = run_with_stdin(cmd, r#"{"title":"Lock"}"#);
-    assert_eq!(code, 2, "{err}");
+    assert_eq!(code, 6, "{err}");
     assert!(err.contains("--yes"), "{err}");
 
     let (base, rx) = serve(vec![
@@ -362,7 +362,7 @@ fn apps_rm_without_yes_refuses_when_not_interactive() {
     let (base, rx) = serve(vec![]);
     let cmd = cli(&base, &["apps", "rm", "demo", "k1"]);
     let (code, _, err) = run(cmd);
-    assert_eq!(code, 2);
+    assert_eq!(code, 6);
     assert!(err.contains("--yes"), "{err}");
     assert!(rx.try_recv().is_err());
 }

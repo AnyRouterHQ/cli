@@ -111,9 +111,9 @@ pub(super) fn run(
         }
         Devices::Rm { id, yes } => {
             if !yes {
-                return Err(crate::cmd::dispatch::hint(
-                    "`relay devices rm` removes the device from your account; pass --yes to confirm.",
-                ));
+                return Err(crate::exit::confirm_required(&format!(
+                    "Remove device {id} from your AnyRouter account?"
+                )));
             }
             // DELETE is gated by requireAuth (session or management key), not by an
             // inference key, so prefer the management key when one is configured.

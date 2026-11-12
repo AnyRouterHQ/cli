@@ -68,10 +68,10 @@ fn pool_off_patches_a_boolean_pool_enabled() {
 }
 
 #[test]
-fn rm_without_yes_sends_nothing_and_exits_2() {
+fn rm_without_yes_sends_nothing_and_exits_6() {
     let (base, rx) = serve(vec![(200, r#"{"id":"dev_1","status":"revoked"}"#.into())]);
     let (code, out, err) = run(&base, &["relay", "devices", "rm", "dev_1"], None);
-    assert_eq!(code, 2, "{out}{err}");
+    assert_eq!(code, 6, "{out}{err}");
     assert!(err.contains("--yes"), "{err}");
     assert!(
         rx.recv_timeout(Duration::from_millis(500)).is_err(),

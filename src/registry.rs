@@ -467,10 +467,13 @@ fn exits(s: &Spec) -> Vec<i32> {
     use crate::exit::*;
     let mut codes = vec![OK, ERROR, USAGE];
     if s.network {
-        codes.extend([NOT_FOUND, RATE_LIMITED]);
+        codes.extend([NOT_FOUND, RATE_LIMITED, NETWORK]);
     }
     if s.auth != Auth::None {
-        codes.push(AUTH);
+        codes.extend([AUTH, PAYMENT_REQUIRED]);
+    }
+    if s.confirms {
+        codes.push(CONFIRM_REQUIRED);
     }
     codes.sort_unstable();
     codes
@@ -705,7 +708,7 @@ mod tests {
             .iter()
             .map(|c| c["code"].as_i64().unwrap())
             .collect();
-        assert_eq!(codes, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(codes, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
         let find = |n: &str| {
             t["commands"]
                 .as_array()

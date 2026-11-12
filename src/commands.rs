@@ -62,6 +62,7 @@ pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
         env.get("ANYR_DISPLAY_BIN").map(String::as_str),
     ));
 
+    crate::help::set_invoked_args(&raw);
     let mut parsed = match parse_cli_args(&raw) {
         Ok(p) => p,
         Err(err) => {
@@ -213,11 +214,7 @@ fn env_says_json(env: &BTreeMap<String, String>) -> bool {
 /// exits 4; anything else exits 1.
 fn fail(err: &str) -> i32 {
     let (code, message) = crate::exit::classify(err);
-    let code = if code == crate::exit::ERROR && message.contains(crate::http::SCOPE_ERROR) {
-        crate::exit::AUTH
-    } else {
-        code
-    };
+    let code = crate::exit::refine(code, &message);
     crate::exit::print(code, &message);
     code
 }

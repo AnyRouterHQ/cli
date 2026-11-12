@@ -57,7 +57,7 @@ pub fn serve(replies: Vec<(u16, String)>) -> (String, mpsc::Receiver<Seen>) {
                 body: String::from_utf8_lossy(&req_body).into_owned(),
             };
             let resp = format!(
-                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nX-Request-Id: req_test_{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             // Record the request before answering: once the client has its

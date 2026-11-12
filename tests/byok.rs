@@ -185,7 +185,7 @@ fn donate_with_yes_shows_consent_then_creates_and_donates() {
 }
 
 #[test]
-fn donate_without_terminal_or_yes_is_usage_error_and_sends_nothing() {
+fn donate_without_terminal_or_yes_exits_6_and_sends_nothing() {
     // WHY: donating shares a paid credential with strangers; a script must
     // opt in explicitly with --yes, and nothing may be read or sent first.
     let (base, rx) = serve(vec![created()]);
@@ -194,8 +194,11 @@ fn donate_without_terminal_or_yes_is_usage_error_and_sends_nothing() {
         &["byok", "add", "openai", "--donate"],
         Some(SECRET),
     );
-    assert_eq!(code, 2, "{out}{err}");
-    assert!(err.contains("--yes"), "{err}");
+    assert_eq!(code, 6, "{out}{err}");
+    assert!(
+        err.contains("byok add openai --donate") && err.contains("--yes"),
+        "{err}"
+    );
     assert!(
         rx.recv_timeout(Duration::from_millis(500)).is_err(),
         "a request was sent without consent"
@@ -304,7 +307,7 @@ fn rm_with_yes_deletes_and_without_yes_off_a_tty_sends_nothing() {
     // WHY: deleting a provider key is destructive; scripts must opt in.
     let (base, rx) = serve(vec![(200, r#"{"deleted":true}"#.into())]);
     let (code, _, err) = run(anyr(&base), &["byok", "rm", "openai"], None);
-    assert_eq!(code, 2, "{err}");
+    assert_eq!(code, 6, "{err}");
     assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
     let (code, out, err) = run(anyr(&base), &["byok", "rm", "openai", "--yes"], None);
     assert_eq!(code, 0, "{out}{err}");

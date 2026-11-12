@@ -176,7 +176,7 @@ fn presets_without_management_key_explains_how_to_get_one() {
 #[test]
 fn revoke_refuses_without_yes_when_not_interactive() {
     let (code, _, err) = run(&["api", "keys", "revoke", "h1", "--key", "sk-ar-test"]);
-    assert_eq!(code, 2);
+    assert_eq!(code, 6, "confirm_required");
     assert!(err.contains("--yes"), "{err}");
 }
 
@@ -479,7 +479,7 @@ fn chat_one_shot_streams_the_reply_to_stdout() {
 fn chat_server_error_prints_the_message_and_fails() {
     let (base, _rx) = serve_once(402, r#"{"error":{"message":"no credits"}}"#);
     let (code, out, err) = run(&["chat", "hi", "--base-url", &base, "--key", "sk-ar-test"]);
-    assert_eq!(code, 1);
+    assert_eq!(code, 8, "HTTP 402 is payment_required");
     assert!(out.is_empty(), "{out:?}");
     assert!(err.contains("error: HTTP 402: no credits"), "{err}");
 }

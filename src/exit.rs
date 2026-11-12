@@ -13,6 +13,9 @@ pub const USAGE: i32 = 2;
 pub const NOT_FOUND: i32 = 3;
 pub const AUTH: i32 = 4;
 pub const RATE_LIMITED: i32 = 5;
+pub const CONFIRM_REQUIRED: i32 = 6;
+pub const NETWORK: i32 = 7;
+pub const PAYMENT_REQUIRED: i32 = 8;
 
 /// (code, name, meaning) — the table `anyr commands --json` and
 /// `anyr help agents` print.
@@ -35,12 +38,43 @@ pub const CODES: &[(i32, &str, &str)] = &[
         "no key, a rejected key, or a key without the scope",
     ),
     (RATE_LIMITED, "rate_limited", "HTTP 429; retry later"),
+    (
+        CONFIRM_REQUIRED,
+        "confirm_required",
+        "the command asks first; rerun with --yes (the hint is the exact command)",
+    ),
+    (
+        NETWORK,
+        "network",
+        "no answer: DNS, TLS, connect or timeout; retry is safe",
+    ),
+    (
+        PAYMENT_REQUIRED,
+        "payment_required",
+        "HTTP 402; add credits or change plan",
+    ),
 ];
+
+/// Codes worth retrying unchanged after a pause.
+pub fn retryable(code: i32) -> bool {
+    matches!(code, RATE_LIMITED | NETWORK)
+}
 
 const TAG: char = '\u{1}';
 
 thread_local! {
     static JSON_ERRORS: Cell<bool> = const { Cell::new(false) };
+    static REQUEST_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The request id of the last failed HTTP response (`X-Request-Id`, else
+/// Cloudflare's `cf-ray`); `None` after a success or when no answer came.
+pub fn set_request_id(id: Option<String>) {
+    REQUEST_ID.with(|r| *r.borrow_mut() = id);
+}
+
+fn request_id() -> Option<String> {
+    REQUEST_ID.with(|r| r.borrow().clone())
 }
 
 /// Switch error output to one JSON object per error on stderr.
@@ -61,10 +95,42 @@ pub fn tag(code: i32, message: impl AsRef<str>) -> String {
 pub fn for_status(status: u16) -> i32 {
     match status {
         401 | 403 => AUTH,
+        402 => PAYMENT_REQUIRED,
         404 => NOT_FOUND,
         429 => RATE_LIMITED,
         _ => ERROR,
     }
+}
+
+/// The exit code for a failure printed as `message`: a plain error (1) that
+/// says the server never answered is a network failure (7); one naming a
+/// restricted key is an auth failure (4).
+pub fn refine(code: i32, message: &str) -> i32 {
+    if code != ERROR {
+        return code;
+    }
+    if message.contains(crate::http::SCOPE_ERROR) {
+        return AUTH;
+    }
+    // A server status error always names `HTTP <status>`; only a request
+    // that got no answer reads `Could not reach`.
+    if message.contains(crate::http::UNREACHABLE) && !message.contains("HTTP ") {
+        return NETWORK;
+    }
+    code
+}
+
+/// The exit-6 error for a command that would ask `question` but cannot (no
+/// TTY) and was not given `--yes`. The hint is the same command plus `--yes`.
+pub fn confirm_required(question: &str) -> String {
+    tag(
+        CONFIRM_REQUIRED,
+        format!(
+            "{question} Pass --yes to confirm in a script.\n{} {}",
+            crate::term::dim("hint:"),
+            crate::help::rerun_with_yes()
+        ),
+    )
 }
 
 /// Split a possibly tagged error into its exit code and message. The tag may
@@ -163,9 +229,17 @@ pub fn json_line(code: i32, message: &str) -> String {
     if let Some(rest) = msg.strip_prefix("error:") {
         msg = rest.trim_start().to_string();
     }
-    let mut err = serde_json::json!({ "code": name(code), "exit": code, "message": msg });
+    let mut err = serde_json::json!({
+        "code": name(code),
+        "exit": code,
+        "message": msg,
+        "retryable": retryable(code),
+    });
     if !hints.is_empty() {
         err["hint"] = serde_json::Value::String(hints.join("\n"));
+    }
+    if let Some(id) = request_id() {
+        err["request_id"] = serde_json::Value::String(id);
     }
     serde_json::json!({ "error": err }).to_string()
 }
@@ -228,6 +302,7 @@ mod tests {
         assert_eq!(for_status(403), AUTH);
         assert_eq!(for_status(404), NOT_FOUND);
         assert_eq!(for_status(429), RATE_LIMITED);
+        assert_eq!(for_status(402), PAYMENT_REQUIRED);
         assert_eq!(for_status(500), ERROR);
     }
 
@@ -243,6 +318,41 @@ mod tests {
         assert_eq!(v["error"]["code"], "auth");
         assert_eq!(v["error"]["message"], "key rejected");
         assert_eq!(v["error"]["hint"], "sign in again: anyr login");
+        assert_eq!(v["error"]["retryable"], false);
+        assert!(v["error"].get("request_id").is_none());
+    }
+
+    #[test]
+    fn only_rate_limits_and_network_failures_are_retryable() {
+        // WHY: an agent retries on `retryable`; retrying an auth or payment
+        // failure burns calls and never succeeds.
+        let retry: Vec<i32> = CODES
+            .iter()
+            .map(|c| c.0)
+            .filter(|c| retryable(*c))
+            .collect();
+        assert_eq!(retry, vec![RATE_LIMITED, NETWORK]);
+        let v: serde_json::Value = serde_json::from_str(&json_line(NETWORK, "x")).unwrap();
+        assert_eq!(v["error"]["retryable"], true);
+        assert_eq!(v["error"]["code"], "network");
+    }
+
+    #[test]
+    fn a_failed_response_id_lands_in_the_envelope() {
+        set_request_id(Some("req_1".into()));
+        let v: serde_json::Value = serde_json::from_str(&json_line(ERROR, "x")).unwrap();
+        set_request_id(None);
+        assert_eq!(v["error"]["request_id"], "req_1");
+    }
+
+    #[test]
+    fn unanswered_requests_exit_7_but_server_errors_keep_their_code() {
+        let net = "Could not reach AnyRouter: https://x/api/v1/me: timed out";
+        assert_eq!(refine(ERROR, net), NETWORK);
+        assert_eq!(refine(ERROR, &format!("Could not launch: {net}")), NETWORK);
+        assert_eq!(refine(ERROR, "HTTP 502: Could not reach upstream"), ERROR);
+        assert_eq!(refine(AUTH, net), AUTH);
+        assert_eq!(refine(ERROR, "boom"), ERROR);
     }
 
     #[test]

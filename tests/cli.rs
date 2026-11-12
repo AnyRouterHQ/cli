@@ -2232,8 +2232,7 @@ fn relay_stop_and_logs_explain_themselves_when_nothing_runs() {
 fn relay_usage_errors_exit_2_with_the_fix() {
     let home = temp_home();
     for (args, needle) in [
-        (&["unpair"][..], "--yes"),
-        (&["models", "enable"], "needs a model id"),
+        (&["models", "enable"][..], "needs a model id"),
         (&["models", "auto", "maybe"], "on or off"),
         (&["pool", "maybe"], "on or off"),
         (&["start", "--model", "gpt-5"], "relay models"),
@@ -2243,6 +2242,15 @@ fn relay_usage_errors_exit_2_with_the_fix() {
         assert_eq!(code, 2, "{args:?}: {stderr}");
         assert!(stderr.contains(needle), "{args:?}: {stderr}");
     }
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn relay_unpair_off_a_terminal_needs_yes_exit_6() {
+    let home = temp_home();
+    let (code, _, stderr) = relay_in(&home, &["unpair"]);
+    assert_eq!(code, 6, "{stderr}");
+    assert!(stderr.contains("relay unpair --yes"), "{stderr}");
     let _ = std::fs::remove_dir_all(&home);
 }
 

@@ -812,16 +812,20 @@ pub(crate) fn encode(s: &str) -> String {
         .collect()
 }
 
+/// Off a terminal without `--yes`/`--ok`: the exit-6 error whose hint is the
+/// rerun. Call it before any request, so a refused run sends nothing.
+pub(crate) fn require_yes_off_tty(parsed: &ParsedArgs, question: &str) -> Result<(), String> {
+    if parsed.skip_confirm() || term::is_interactive() {
+        Ok(())
+    } else {
+        Err(crate::exit::confirm_required(question))
+    }
+}
+
+/// Ask `question` unless `--yes`; off a terminal, exit 6.
 pub(crate) fn confirm(parsed: &ParsedArgs, question: &str) -> Result<(), String> {
-    if parsed.flag_true("yes") {
-        return Ok(());
-    }
-    if !term::is_interactive() {
-        return Err(format!(
-            "{USAGE}{question} Pass --yes to confirm in a script."
-        ));
-    }
-    if term::confirm(question) {
+    require_yes_off_tty(parsed, question)?;
+    if parsed.skip_confirm() || term::confirm(question) {
         Ok(())
     } else {
         Err("cancelled".into())
@@ -964,7 +968,7 @@ pub fn help() -> String {
         out.push_str(&format!("  {name:<12}{desc}  [{}]\n", verbs.join(" ")));
     }
     out.push_str(
-        "\nFlags\n  --json            Print server JSON (default when piped for get)\n  --yes             Skip confirmation on revoke/delete\n  --limit <n>       Page size for list verbs\n  --data <json>     JSON body: inline, @file, or - for stdin (raw / presets)\n  -H key:value      Extra request header on raw calls (repeatable)\n  --idempotency-key <k>  Send an Idempotency-Key header on raw calls\n  --profile <name>  Use another account\n\nExit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth/permission, 5 rate limited.\n",
+        "\nFlags\n  --json            Print server JSON (default when piped for get)\n  --yes             Skip confirmation on revoke/delete\n  --limit <n>       Page size for list verbs\n  --data <json>     JSON body: inline, @file, or - for stdin (raw / presets)\n  -H key:value      Extra request header on raw calls (repeatable)\n  --idempotency-key <k>  Send an Idempotency-Key header on raw calls\n  --profile <name>  Use another account\n\nExit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth/permission, 5 rate limited,\n6 needs --yes, 7 network, 8 payment required.\n",
     );
     out
 }

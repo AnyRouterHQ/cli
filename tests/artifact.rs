@@ -327,7 +327,7 @@ fn public_needs_yes_without_a_terminal_and_sends_nothing() {
     };
     let a = args(&[]);
     let (code, _, err) = anyr(&dir, &refs(&a));
-    assert_eq!(code, 2, "{err}");
+    assert_eq!(code, 6, "{err}");
     assert!(err.contains("--yes"), "{err}");
     assert!(seen.lock().unwrap().is_empty());
     let a = args(&["--yes"]);
@@ -400,7 +400,8 @@ fn rm_confirms_unless_yes_and_sends_delete() {
             "sk-ar-test",
         ],
     );
-    assert_eq!(code, 2, "{err}");
+    assert_eq!(code, 6, "{err}");
+    assert!(err.contains("--yes"), "{err}");
     assert!(seen.lock().unwrap().is_empty());
     let (code, _, err) = anyr(
         &dir,

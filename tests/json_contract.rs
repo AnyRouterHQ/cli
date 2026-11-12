@@ -302,3 +302,38 @@ fn error_output_masks_a_key_echoed_by_the_server() {
         );
     }
 }
+
+#[test]
+fn payment_and_network_failures_have_their_own_codes() {
+    // WHY: an agent must tell "add credits" (8, do not retry) from "no
+    // answer" (7, retry) and from a plain failure (1).
+    let (base, _rx) = common::serve(vec![(402, r#"{"error":{"message":"no credits"}}"#.into())]);
+    let (code, _, err) = common::run(&base, &["usage", "--json"], None);
+    assert_eq!(code, 8, "{err}");
+    let v: Value = serde_json::from_str(err.trim()).unwrap();
+    assert_eq!(v["error"]["code"], "payment_required");
+    assert_eq!(v["error"]["retryable"], false);
+    assert_eq!(v["error"]["request_id"], "req_test_402", "{err}");
+
+    let (base, _rx) = common::serve(vec![(429, "{}".into())]);
+    let (code, _, err) = common::run(&base, &["usage", "--json"], None);
+    assert_eq!(code, 5, "{err}");
+    let v: Value = serde_json::from_str(err.trim()).unwrap();
+    assert_eq!(v["error"]["retryable"], true);
+
+    // A port nobody listens on: connection refused.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let base = format!("http://127.0.0.1:{port}/api");
+    for args in [&["usage", "--json"][..], &["artifact", "ls", "--json"]] {
+        let (code, _, err) = common::run(&base, args, None);
+        assert_eq!(code, 7, "{args:?}: {err}");
+        let v: Value = serde_json::from_str(err.trim()).unwrap();
+        assert_eq!(v["error"]["code"], "network");
+        assert_eq!(v["error"]["retryable"], true);
+        assert!(v["error"].get("request_id").is_none(), "{err}");
+    }
+}

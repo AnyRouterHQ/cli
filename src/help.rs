@@ -5,6 +5,40 @@ use crate::VERSION;
 
 thread_local! {
     static INVOKED_BIN: RefCell<String> = const { RefCell::new(String::new()) };
+    static INVOKED_ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The words after the binary name, for `rerun_with_yes`.
+pub fn set_invoked_args(args: &[String]) {
+    INVOKED_ARGS.with(|slot| *slot.borrow_mut() = args.to_vec());
+}
+
+/// This run's command line with `--yes` added (before a `--`), quoted for a
+/// POSIX shell.
+pub fn rerun_with_yes() -> String {
+    let mut args = INVOKED_ARGS.with(|slot| slot.borrow().clone());
+    if !args.iter().any(|a| a == "--yes") {
+        let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
+        args.insert(at, "--yes".into());
+    }
+    let mut out = invoked_bin();
+    for a in &args {
+        out.push(' ');
+        out.push_str(&shell_quote(a));
+    }
+    out
+}
+
+fn shell_quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:=@,+%".contains(&b));
+    if plain {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
 }
 
 const LAUNCH_HELP_BODY: &str = "\
@@ -1175,6 +1209,30 @@ mod tests {
                 "cli-regression parses ^[A-Z ]+$ headings: {heading}"
             );
         }
+    }
+
+    #[test]
+    fn rerun_adds_yes_before_the_separator_and_quotes_words() {
+        // WHY: the exit-6 hint must run as is; `--yes` after `--` would go to
+        // the agent, and an unquoted space would split an argument.
+        super::set_invoked_args(&[
+            "claude".into(),
+            "-p".into(),
+            "fix it".into(),
+            "--".into(),
+            "x".into(),
+        ]);
+        assert!(super::rerun_with_yes().ends_with("claude -p 'fix it' --yes -- x"));
+        super::set_invoked_args(&["artifact".into(), "rm".into(), "it's".into()]);
+        assert!(super::rerun_with_yes().ends_with("artifact rm 'it'\\''s' --yes"));
+        super::set_invoked_args(&[
+            "keys".into(),
+            "revoke".into(),
+            "ab12".into(),
+            "--yes".into(),
+        ]);
+        assert!(super::rerun_with_yes().ends_with("keys revoke ab12 --yes"));
+        super::set_invoked_args(&[]);
     }
 
     #[test]

@@ -3482,8 +3482,8 @@ fn run_relay_unpair(
     }
     if !yes {
         if !crate::term::is_interactive() {
-            return Err(crate::cmd::dispatch::hint(
-                "`relay unpair` asks for confirmation; pass --yes when not at a terminal.",
+            return Err(crate::exit::confirm_required(
+                "Remove this device from your AnyRouter account?",
             ));
         }
         if !crate::term::confirm("Remove this device from your AnyRouter account?") {

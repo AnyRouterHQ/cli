@@ -461,14 +461,10 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             let hash = parsed.passthrough.get(1).cloned().ok_or_else(|| {
                 hint("Usage: {bin} keys revoke <last4|id|hash>   (find keys: {bin} keys list)")
             })?;
+            crate::api::require_yes_off_tty(parsed, &format!("Revoke key {hash}?"))?;
             let (_path, _cfg, base, cred) = keys_credential(parsed, env)?;
             let row = resolve_key(&fetch_keys(&base, &cred)?, &hash)?;
             if !parsed.skip_confirm() {
-                if !term::is_interactive() {
-                    return Err(crate::cmd::dispatch::hint(
-                        "Revoking a key is destructive; pass --yes to run non-interactively.",
-                    ));
-                }
                 let this_machine = if is_active_key_row(&row.masked, Some(&cred)) {
                     " This is the key this machine uses."
                 } else {

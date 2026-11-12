@@ -181,10 +181,18 @@ fn ls_and_rm_are_hidden_aliases_of_list_and_revoke() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("ci-bot"), "{out}");
     assert_eq!(rx.recv().unwrap().path, "/api/v1/keys");
-    // Without a TTY or --yes, `rm` refuses like `revoke` (usage, nothing deleted).
-    let (code, _, err) = run(&base, &["keys", "rm", "abc123"], None);
-    assert_eq!(code, 2, "{err}");
-    assert!(err.contains("--yes"), "{err}");
-    let (code, _, err) = run(&base, &["keys", "rm", "zzz"], None);
+    // Without a TTY or --yes, `rm` refuses like `revoke` (exit 6, nothing
+    // sent), and the hint is the same command with --yes.
+    let (code, _, err) = run(&base, &["keys", "rm", "abc123", "--json"], None);
+    assert_eq!(code, 6, "{err}");
+    let v: serde_json::Value = serde_json::from_str(err.trim()).unwrap();
+    assert_eq!(v["error"]["code"], "confirm_required");
+    assert_eq!(v["error"]["retryable"], false);
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(
+        hint.starts_with("anyr keys rm abc123 --json") && hint.ends_with(" --yes"),
+        "{err}"
+    );
+    let (code, _, err) = run(&base, &["keys", "rm", "zzz", "--yes"], None);
     assert_eq!(code, 3, "an unknown hash is not found: {err}");
 }

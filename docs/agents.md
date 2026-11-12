@@ -13,13 +13,17 @@ Output
   --json                        JSON on stdout for every command that has a
                                 JSON form. On any command, an error becomes one
                                 JSON object on stderr:
-                                {"error":{"code":"auth","exit":4,"message":"…","hint":"…"}}
+                                {"error":{"code":"auth","exit":4,"message":"…",
+                                "hint":"…","retryable":false,"request_id":"…"}}
+                                retryable is true for exits 5 and 7; request_id
+                                is there when the server's reply carried one
   ANYR_OUTPUT=json              The same as passing --json to every command
   --quiet, ANYR_QUIET=1         No update notices and no background update
   NO_COLOR=1                    No ANSI colour (also off whenever stdout is not
                                 a terminal)
   Without a TTY, anyr shows no prompts, spinners or update notices. Commands
-  that would ask first need --yes.
+  that would ask first need --yes; without it they exit 6 and the hint is
+  the same command with --yes added (a --key value in it is masked).
 
 Exit codes
   0  ok            success
@@ -28,6 +32,9 @@ Exit codes
   3  not_found     the model, key, id or resource does not exist
   4  auth          no key, a rejected key, or a key without the scope
   5  rate_limited  HTTP 429; retry later
+  6  confirm_required  asks first; rerun with --yes (the hint is the command)
+  7  network       no answer: DNS, TLS, connect or timeout; retry is safe
+  8  payment_required  HTTP 402; add credits or change plan
 
 Auth
   ANYROUTER_API_KEY=sk-ar-v1-…  Inference key; no login needed
