@@ -6,9 +6,9 @@ fn main() {
     pack_help();
 }
 
-/// Deflate the long help pages (`assets/help/*.txt`) and the agents guide
-/// into `$OUT_DIR/help.bin` as `name\0text\0` pairs; `help::doc` inflates
-/// them on demand.
+/// Deflate the long text pages (`assets/help/*.txt`: help, onboard prompts)
+/// and the agents guide into `$OUT_DIR/help.bin` as `name\0text\0` pairs;
+/// `help::doc` inflates them on demand.
 fn pack_help() {
     println!("cargo:rerun-if-changed=assets/help");
     println!("cargo:rerun-if-changed=docs/agents.md");

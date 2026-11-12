@@ -1,0 +1,26 @@
+Goal: route this Claude Code (or MCP-based) project through AnyRouter.
+
+AnyRouter exposes a full Anthropic-compatible `/api` endpoint — just repoint
+the SDK and keep your existing tools, streaming, and system prompts unchanged.
+
+Step 1: Read the contract.
+  Fetch and skim base URLs, auth, model id format, and streaming:
+    - Quickstart: https://docs.anyrouter.dev/getting-started/quickstart.md
+    - llms.txt:   https://anyrouter.dev/llms.txt
+
+Step 2: Audit LLM touchpoints.
+  Find every place the Anthropic SDK (or Claude API directly) is called.
+  Note which model ids are used.
+
+Step 3: Repoint the client.
+  Change only:
+    - baseURL → https://anyrouter.dev/api
+    - apiKey  → process.env.ANYROUTER_API_KEY  (never inline)
+  Write model ids as `anthropic/<model>` (e.g. anthropic/claude-sonnet-4-6).
+  Leave tool definitions, streaming setup, and system prompts untouched.
+
+Step 4: Smoke test.
+  Send one short prompt, print the reply. 401/403 → check ANYROUTER_API_KEY
+  starts with `sk-ar-`. Pass = done.
+
+Reference: https://docs.anyrouter.dev/getting-started/quickstart.md

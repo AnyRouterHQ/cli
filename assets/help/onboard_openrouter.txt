@@ -1,0 +1,26 @@
+Goal: migrate this project from OpenRouter to AnyRouter.
+
+AnyRouter is OpenAI-compatible — the same interface OpenRouter uses.
+Switching is a one-line baseURL change; all model ids stay in `provider/model` form.
+
+Step 1: Read the contract.
+  Fetch and skim base URLs, auth, model id format, and streaming:
+    - Quickstart: https://docs.anyrouter.dev/getting-started/quickstart.md
+    - llms.txt:   https://anyrouter.dev/llms.txt
+
+Step 2: Confirm before editing.
+  List the OpenRouter model ids in use. I'll verify them against llms.txt and
+  give you the AnyRouter equivalents (same `provider/model` format, minor id diffs).
+
+Step 3: Repoint the client.
+  Change only:
+    - baseURL → https://anyrouter.dev/api/v1
+    - apiKey  → process.env.ANYROUTER_API_KEY  (never inline)
+  Update model ids as needed (check llms.txt for exact strings).
+  Leave every call site untouched.
+
+Step 4: Smoke test.
+  Send one short prompt, print the reply. 401/403 → check ANYROUTER_API_KEY
+  starts with `sk-ar-`. Pass = done.
+
+Reference: https://docs.anyrouter.dev/getting-started/quickstart.md

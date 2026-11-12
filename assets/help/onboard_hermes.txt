@@ -1,0 +1,10 @@
+Goal: run my Hermes / OpenClaw coding agent through AnyRouter.
+
+Step 1: Read https://docs.anyrouter.dev/getting-started/quickstart.md.
+Step 2: In the agent's model-provider config, set the OpenAI-compatible
+  endpoint to https://anyrouter.dev/api/v1 with the key from ANYROUTER_API_KEY.
+Step 3: Set the model to `anyrouter/hermes` — AnyRouter's auto-router that
+  picks the best agentic model per request — or any `provider/model` id
+  from https://anyrouter.dev/llms.txt.
+Step 4: Start the agent, run one short task, and confirm requests appear at
+  https://anyrouter.dev/dashboard/logs.

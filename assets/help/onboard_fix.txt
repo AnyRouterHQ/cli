@@ -1,0 +1,26 @@
+Goal: fix this project's LLM wiring so requests succeed through AnyRouter.
+Do not rewrite working call sites — repair config, env, and model ids only.
+
+Step 1: Read the contract.
+    - Quickstart: https://docs.anyrouter.dev/getting-started/quickstart.md
+    - Errors:     https://anyrouter.dev/docs/guides/errors.md
+    - llms.txt:   https://anyrouter.dev/llms.txt
+
+Step 2: Diagnose from evidence.
+  Collect the failing status/body (401/403/404/429/5xx), the base URL in
+  use, the model id string, and whether `ANYROUTER_API_KEY` is set and
+  starts with `sk-ar-`. Never print the full key.
+
+Step 3: Apply the smallest fix.
+  Common repairs:
+    - OpenAI-compatible clients → https://anyrouter.dev/api/v1
+    - Anthropic SDK / Claude Code → https://anyrouter.dev/api
+    - Key from env `ANYROUTER_API_KEY` (never hardcoded)
+    - Model ids in `provider/model` form (verify against llms.txt)
+    - Preserve streaming and existing error handling
+
+Step 4: Smoke test once, then stop.
+  Send a short prompt. Pass = text returns (or streams). Summarize what
+  changed in one short paragraph.
+
+Reference: https://docs.anyrouter.dev/getting-started/quickstart.md

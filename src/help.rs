@@ -261,9 +261,11 @@ fn fill(bin: &str, template: &str) -> String {
     template.replace("{bin}", bin)
 }
 
-/// A long help page from `assets/help/<name>.txt`. `build.rs` packs them
-/// deflated (`name\0text\0` pairs), which keeps about 24 KB out of the binary;
-/// inflating one page costs well under a millisecond and only `--help` pays it.
+/// A long text page from `assets/help/<name>.txt` (help pages, onboard
+/// prompts) or the agents guide. `build.rs` packs them deflated
+/// (`name\0text\0` pairs), which keeps about 33 KB out of the binary;
+/// inflating costs well under a millisecond and only the command that prints
+/// the page pays it.
 pub(crate) fn doc(name: &str) -> String {
     static PACKED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/help.bin"));
     let raw = miniz_oxide::inflate::decompress_to_vec(PACKED).unwrap_or_default();
@@ -552,7 +554,9 @@ mod tests {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             let name = path.file_stem().unwrap().to_str().unwrap().to_string();
-            let want = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+            let want = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("\r\n", "\n");
             assert!(!want.is_empty(), "{name}");
             assert_eq!(doc(&name), want, "{name}");
             pages += 1;

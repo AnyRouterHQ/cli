@@ -1,0 +1,33 @@
+Plan a migration to AnyRouter for this project.
+Do NOT change any code yet — produce a written plan first.
+
+AnyRouter is an OpenAI- and Anthropic-compatible gateway. Switching is a
+config change, but I want you to audit the codebase before touching it.
+
+Step 1: Read the docs.
+    - Quickstart:  https://docs.anyrouter.dev/getting-started/quickstart.md
+    - llms.txt:    https://anyrouter.dev/llms.txt
+  Focus on base URLs, auth, model id format, streaming, and BYOK.
+
+Step 2: Audit the codebase.
+  Inventory every place that talks to an LLM:
+    - Which SDKs / clients are imported (openai, @anthropic-ai/sdk, ai, langchain, …)?
+    - Where are base URLs and API keys configured (env, config files, hardcoded)?
+    - Which model ids are used, and where?
+    - Where does streaming or tool-calling happen?
+    - Are there provider-specific request/response shapes that need adapting?
+
+Step 3: Draft the migration plan.
+  Produce a Markdown plan with:
+    - Files to change (path + the specific edit)
+    - New env vars (ANYROUTER_API_KEY, base URL overrides)
+    - Model id mapping (current → `provider/model` form)
+    - Risks (rate limits, streaming behavior, response shape diffs)
+    - Rollback strategy (one env var flip)
+    - Recommended order of changes
+
+Step 4: Stop and wait.
+  Show the plan. Ask me to approve before you make any changes.
+  Once approved, you can run the plan — but not before.
+
+Reference: https://docs.anyrouter.dev/getting-started/quickstart.md

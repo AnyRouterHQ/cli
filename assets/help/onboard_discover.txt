@@ -1,0 +1,36 @@
+Help me pick which AnyRouter models to use in this project.
+
+AnyRouter routes to 150+ models across 28+ providers via one OpenAI-
+and Anthropic-compatible endpoint. I want a model recommendation grounded in
+what this codebase actually does — not a generic answer.
+
+Step 1: Read the docs and the models catalog.
+    - Quickstart:  https://docs.anyrouter.dev/getting-started/quickstart.md
+    - llms.txt:    https://anyrouter.dev/llms.txt
+    - Full docs:   https://anyrouter.dev/llms-full.txt
+  Note the model id format (`provider/model`) and the API surfaces
+  (chat, responses, embeddings, images, messages).
+
+Step 2: Read the codebase.
+  Figure out the LLM workload(s):
+    - Use case (chat, agents, RAG, code, vision, embeddings, image gen)?
+    - Latency vs quality vs cost priorities (visible in prompts, retries,
+      timeouts, caching)?
+    - Context window needs (long-doc summarization? short turns?)?
+    - Multimodal needs (images, audio)?
+    - Tool calling / structured output?
+
+Step 3: Recommend 2-3 models per workload.
+  For each option give:
+    - The `provider/model` id (exact, copy-pasteable)
+    - Why it fits (1-2 sentences)
+    - Trade-offs vs the other options (cost, latency, quality, context)
+  Prefer models that exist on AnyRouter today — verify against
+  https://anyrouter.dev/llms.txt.
+
+Step 4: Hand off.
+  If I pick options, ask whether to:
+    (a) just print the env var changes, or
+    (b) wire them in (then switch to the "Set up AnyRouter" prompt).
+
+Reference: https://docs.anyrouter.dev/getting-started/quickstart.md

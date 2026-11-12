@@ -1,0 +1,24 @@
+Goal: ship AnyRouter credentials and base URL into this project's deploy / CI.
+Do not change application call sites unless env wiring is missing.
+
+Step 1: Read the contract.
+    - Quickstart: https://docs.anyrouter.dev/getting-started/quickstart.md
+    - Auth:       https://anyrouter.dev/docs/getting-started/authentication.md
+
+Step 2: Inventory runtime surfaces.
+  Find every place that needs LLM access in prod/staging/CI (env files,
+  secret stores, GitHub Actions, Cloudflare/Workers bindings, Docker,
+  serverless config). Note current key/env names and base URLs.
+
+Step 3: Wire secrets safely.
+  - Store the key as `ANYROUTER_API_KEY` (or map an existing secret to it).
+  - OpenAI-compatible → https://anyrouter.dev/api/v1
+  - Anthropic-compatible → https://anyrouter.dev/api
+  - Never commit keys. Prefer platform secrets / OIDC where available.
+  - Keep model ids in `provider/model` form.
+
+Step 4: Verify in the target environment.
+  Add or run one smoke check that hits the gateway and prints a short
+  reply. Document the required secrets in README or deploy docs.
+
+Reference: https://docs.anyrouter.dev/getting-started/quickstart.md
