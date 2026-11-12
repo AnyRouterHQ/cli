@@ -26,6 +26,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+real_home="${HOME:-}"
 export ANYROUTER_HOME="$work/home" HOME="$work/home"
 export ANYR_NO_UPDATE=1 ANYR_NO_TELEMETRY=1 DO_NOT_TRACK=1 ANYR_NO_CATALOG=1
 unset ANYROUTER_API_KEY ANYROUTER_MANAGEMENT_KEY ANYROUTER_PROFILE ANYR_OUTPUT ANYR_QUIET
@@ -40,7 +41,7 @@ write_config() { # <base_url or empty>
   } >"$ANYROUTER_HOME/config.yaml"
 }
 
-fail() { echo "FAIL $1" >&2; [ -s "$work/out" ] && sed 's/^/  out: /' "$work/out" >&2; [ -s "$work/err" ] && sed 's/^/  err: /' "$work/err" >&2; exit 1; }
+fail() { echo "FAIL $1" >&2; [ -s "$work/out" ] && sed 's/^/  out: /' "$work/out" >&2; [ -s "$work/err" ] && sed 's/^/  err: /' "$work/err" >&2; [ -s "$work/mock.log" ] && sed 's/^/  mock: /' "$work/mock.log" >&2; exit 1; }
 pass() { echo "ok   $1"; }
 
 # run <stdin-file> <args…>: sets $code; output in $work/out, $work/err.
@@ -93,10 +94,21 @@ pass "mutating command without --yes: exit 6"
 
 [ "$mode" = "--mock" ] || { echo "smoke: offline ok"; exit 0; }
 
-"$PY" "$here/smoke_mock.py" "$work/port" 2>"$work/mock.log" &
+# The mock gets the runner's own HOME: a python shim (pyenv, the macOS
+# toolcache) may read it at start.
+HOME="$real_home" "$PY" "$here/smoke_mock.py" "$work/port" 2>"$work/mock.log" &
 mock_pid=$!
-for _ in $(seq 1 50); do [ -s "$work/port" ] && break; sleep 0.1; done
-[ -s "$work/port" ] || fail "mock server did not start"
+mock_fail() {
+  echo "FAIL $1" >&2
+  sed 's/^/  mock: /' "$work/mock.log" >&2
+  exit 1
+}
+for _ in $(seq 1 200); do
+  [ -s "$work/port" ] && break
+  kill -0 "$mock_pid" 2>/dev/null || mock_fail "mock server exited"
+  sleep 0.1
+done
+[ -s "$work/port" ] || mock_fail "mock server did not start in 20 s"
 write_config "http://127.0.0.1:$(cat "$work/port")/api"
 
 for cmd in "whoami" "keys list" "usage" "logs"; do
