@@ -94,6 +94,18 @@ jobs:
           "$f" --version
           "$f" --help >/dev/null
 
+      # The agent-contract smoke, when the tagged source has it (older tags
+      # predate scripts/smoke.sh). Mock API tier on Linux and macOS.
+      - name: smoke the agent contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f scripts/smoke.sh ]; then
+            bash scripts/smoke.sh "./${{ matrix.asset }}" ${{ runner.os != 'Windows' && '--mock' || '' }}
+          else
+            echo "scripts/smoke.sh not in this tag; skipped"
+          fi
+
       - name: bench
         shell: bash
         run: |

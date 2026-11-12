@@ -186,10 +186,18 @@ fn workflow_files_exist_and_do_not_auto_merge() {
         binaries.contains("release not found"),
         "uploads must retry release-not-found inline (historical tags lack helper scripts)"
     );
-    assert!(
-        !binaries.contains("bash scripts/"),
-        "workflow must not call helper scripts from a tag checkout"
-    );
+    // A tag checkout may predate a helper script, so each one runs only
+    // behind an existence check.
+    for call in binaries.split("bash scripts/").skip(1) {
+        let script = call
+            .split(|c: char| c.is_whitespace() || c == '"')
+            .next()
+            .unwrap();
+        assert!(
+            binaries.contains(&format!("[ -f scripts/{script} ]")),
+            "workflow calls scripts/{script} from a tag checkout without checking it exists"
+        );
+    }
     assert!(
         binaries.contains("hard gate"),
         "checksums job must fail when the release has zero binaries"

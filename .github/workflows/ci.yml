@@ -226,9 +226,10 @@ jobs:
           ls -la "${{ matrix.asset }}"
 
       # Execute the exact file that will be published, on its own platform.
+      # Offline checks on every leg; the mock API tier on Linux and macOS.
       - name: smoke the packaged binary
         shell: bash
-        run: bash scripts/smoke-binary.sh "${{ matrix.asset }}"
+        run: bash scripts/smoke.sh "${{ matrix.asset }}" ${{ runner.os != 'Windows' && '--mock' || '' }}
 
       - name: bench size and startup
         shell: bash
