@@ -1,0 +1,11 @@
+# {bin} bash completion. Install:
+#   {bin} completion bash > ~/.local/share/bash-completion/completions/{bin}
+# or add to ~/.bashrc:  source <({bin} completion bash)
+_{func}_complete() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local IFS=$'\n'
+    local out
+    out=$("{bin}" __complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null) || return
+    COMPREPLY=($(compgen -W "$(printf '%s\n' $out | cut -f1)" -- "$cur"))
+}
+complete -o default -F _{func}_complete {bin}

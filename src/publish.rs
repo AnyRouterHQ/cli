@@ -56,28 +56,7 @@ pub const APPS_VERBS: &[(&str, &str)] = &[
 pub(crate) const VISIBILITIES: &[&str] = &["unlisted", "private", "public"];
 
 pub fn publish_help() -> String {
-    let bin = crate::help::invoked_bin();
-    format!(
-        "{bin} publish — send a JSON document to an AnyRouter app\n\n\
-Usage:\n  {bin} publish <app> [file|-] [--visibility unlisted|private|public] [--yes] [--dry-run] [--json]\n  \
-{bin} publish <app> <page.html|figure.svg> [--light <page-light.html>] [options]\n\n\
-Reads the document from <file>, or from stdin with `-` (or when piped with no file).\n\
-It is checked locally against the app's published JSON Schema first; problems are\n\
-listed by field and nothing is uploaded (exit 2). On success the URL is printed.\n\n\
-An .html or .svg file is uploaded as a page when the app takes uploads (see\n\
-`upload` in `{bin} apps schema <app>`). A sibling <name>-light.<ext> is sent as\n\
-the light build; pass --light <file> to name it yourself.\n\n\
-Examples\n  $ {bin} apps schema explain > schema.json     # what an agent must produce\n  \
-$ <agent produces explain json> | {bin} publish explain -\n  \
-$ {bin} publish explain fig.json --visibility public --yes\n  \
-$ {bin} publish explain fig.json --dry-run\n  \
-$ {bin} publish explain page.html --dry-run    # page.html + page-light.html\n\n\
-Visibility: unlisted (default; link works, not listed), private (only you),\n\
-public (listed after review). Re-running the same document is safe: it carries a\n\
-stable Idempotency-Key, so the server returns the original instead of a copy.\n\n\
-Exit codes: 0 ok, 1 error, 2 usage or invalid document, 3 not found, 4 auth, 5 rate limited,\n\
-6 needs --yes, 7 network, 8 payment required.\n"
-    )
+    crate::help::doc("publish").replace("{bin}", &crate::help::invoked_bin())
 }
 
 pub fn apps_help() -> String {

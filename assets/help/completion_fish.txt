@@ -1,0 +1,8 @@
+# {bin} fish completion. Install:
+#   {bin} completion fish > ~/.config/fish/completions/{bin}.fish
+function __{func}_complete
+    set -l words (commandline -opc)
+    set -e words[1]
+    {bin} __complete $words (commandline -ct) 2>/dev/null
+end
+complete -c {bin} -f -a '(__{func}_complete)'

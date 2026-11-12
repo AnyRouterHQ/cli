@@ -976,16 +976,12 @@ pub(crate) fn show(ctx: &Ctx, value: Value, _hide: &[&str]) -> Result<i32, Strin
 
 pub fn help() -> String {
     let bin = crate::help::invoked_bin();
-    let mut out = format!(
-        "{bin} api — the AnyRouter dashboard from your terminal\n\nExamples\n  $ {bin} api me\n  $ {bin} api credits\n  $ {bin} api keys create ci-bot\n  $ {bin} api keys list --json\n  $ {bin} api logs list --limit 20\n  $ {bin} api presets create fast --data '{{\"model\":\"anyrouter/auto\"}}'\n  $ {bin} api aliases set opus anthropic/claude-opus-4.5\n\nRaw requests (like `gh api`)\n  $ {bin} api /credits\n  $ {bin} api PATCH /keys/<hash> disabled=true limit:=25\n  $ {bin} api POST /apps/explain/submissions --data @body.json\n  $ cat body.json | {bin} api POST /apps/explain/submissions --data - -H X-Trace:1\n\nResources\n"
-    );
+    let mut out = crate::help::doc("api").replace("{bin}", &bin);
     for (name, desc) in RESOURCES {
         let verbs: Vec<&str> = verbs(name).iter().map(|(v, _)| *v).collect();
         out.push_str(&format!("  {name:<12}{desc}  [{}]\n", verbs.join(" ")));
     }
-    out.push_str(
-        "\nFlags\n  --json            Print server JSON (default when piped for get)\n  --yes             Skip confirmation on revoke/delete\n  --limit <n>       Page size for list verbs\n  --data <json>     JSON body: inline, @file, or - for stdin (raw / presets)\n  -H key:value      Extra request header on raw calls (repeatable)\n  --idempotency-key <k>  Send an Idempotency-Key header on raw calls\n  --profile <name>  Use another account\n\nExit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth/permission, 5 rate limited,\n6 needs --yes, 7 network, 8 payment required.\n",
-    );
+    out.push_str(&crate::help::doc("api_flags"));
     out
 }
 

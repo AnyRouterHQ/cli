@@ -1,0 +1,12 @@
+
+Flags
+  --json            Print server JSON (default when piped for get)
+  --yes             Skip confirmation on revoke/delete
+  --limit <n>       Page size for list verbs
+  --data <json>     JSON body: inline, @file, or - for stdin (raw / presets)
+  -H key:value      Extra request header on raw calls (repeatable)
+  --idempotency-key <k>  Send an Idempotency-Key header on raw calls
+  --profile <name>  Use another account
+
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth/permission, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.

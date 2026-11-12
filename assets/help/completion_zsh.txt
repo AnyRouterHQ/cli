@@ -1,0 +1,19 @@
+#compdef {bin}
+# {bin} zsh completion. Install:
+#   {bin} completion zsh > "${fpath[1]}/_{bin}"   then restart zsh
+# or add to ~/.zshrc:  source <({bin} completion zsh)
+_{func}() {
+    local -a lines items
+    lines=("${(@f)$("{bin}" __complete "${(@)words[2,CURRENT-1]}" "${words[CURRENT]}" 2>/dev/null)}")
+    local line
+    for line in $lines; do
+        [[ -z $line ]] && continue
+        if [[ $line == *$'\t'* ]]; then
+            items+=("${${line%%$'\t'*}//:/\\:}:${line#*$'\t'}")
+        else
+            items+=("${line//:/\\:}")
+        fi
+    done
+    (( ${#items} )) && _describe -t values '{bin}' items || _files
+}
+compdef _{func} {bin}

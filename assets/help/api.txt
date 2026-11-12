@@ -1,0 +1,18 @@
+{bin} api — the AnyRouter dashboard from your terminal
+
+Examples
+  $ {bin} api me
+  $ {bin} api credits
+  $ {bin} api keys create ci-bot
+  $ {bin} api keys list --json
+  $ {bin} api logs list --limit 20
+  $ {bin} api presets create fast --data '{"model":"anyrouter/auto"}'
+  $ {bin} api aliases set opus anthropic/claude-opus-4.5
+
+Raw requests (like `gh api`)
+  $ {bin} api /credits
+  $ {bin} api PATCH /keys/<hash> disabled=true limit:=25
+  $ {bin} api POST /apps/explain/submissions --data @body.json
+  $ cat body.json | {bin} api POST /apps/explain/submissions --data - -H X-Trace:1
+
+Resources

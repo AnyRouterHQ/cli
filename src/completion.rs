@@ -210,73 +210,13 @@ pub fn complete(words: &[String], env: &BTreeMap<String, String>) -> Vec<String>
 /// Shell script that wires `<bin> __complete` into the given shell.
 pub fn script(shell: &str, bin: &str) -> Option<String> {
     let body = match shell {
-        "bash" => BASH,
-        "zsh" => ZSH,
-        "fish" => FISH,
-        "powershell" | "pwsh" => POWERSHELL,
+        "bash" | "zsh" | "fish" | "powershell" => crate::help::doc(&format!("completion_{shell}")),
+        "pwsh" => crate::help::doc("completion_powershell"),
         _ => return None,
     };
     let func = bin.replace(['-', '.'], "_");
     Some(body.replace("{bin}", bin).replace("{func}", &func))
 }
-
-const BASH: &str = r#"# {bin} bash completion. Install:
-#   {bin} completion bash > ~/.local/share/bash-completion/completions/{bin}
-# or add to ~/.bashrc:  source <({bin} completion bash)
-_{func}_complete() {
-    local cur="${COMP_WORDS[COMP_CWORD]}"
-    local IFS=$'\n'
-    local out
-    out=$("{bin}" __complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null) || return
-    COMPREPLY=($(compgen -W "$(printf '%s\n' $out | cut -f1)" -- "$cur"))
-}
-complete -o default -F _{func}_complete {bin}
-"#;
-
-const ZSH: &str = r#"#compdef {bin}
-# {bin} zsh completion. Install:
-#   {bin} completion zsh > "${fpath[1]}/_{bin}"   then restart zsh
-# or add to ~/.zshrc:  source <({bin} completion zsh)
-_{func}() {
-    local -a lines items
-    lines=("${(@f)$("{bin}" __complete "${(@)words[2,CURRENT-1]}" "${words[CURRENT]}" 2>/dev/null)}")
-    local line
-    for line in $lines; do
-        [[ -z $line ]] && continue
-        if [[ $line == *$'\t'* ]]; then
-            items+=("${${line%%$'\t'*}//:/\\:}:${line#*$'\t'}")
-        else
-            items+=("${line//:/\\:}")
-        fi
-    done
-    (( ${#items} )) && _describe -t values '{bin}' items || _files
-}
-compdef _{func} {bin}
-"#;
-
-const FISH: &str = r#"# {bin} fish completion. Install:
-#   {bin} completion fish > ~/.config/fish/completions/{bin}.fish
-function __{func}_complete
-    set -l words (commandline -opc)
-    set -e words[1]
-    {bin} __complete $words (commandline -ct) 2>/dev/null
-end
-complete -c {bin} -f -a '(__{func}_complete)'
-"#;
-
-const POWERSHELL: &str = r#"# {bin} PowerShell completion. Install (add to $PROFILE):
-#   {bin} completion powershell | Out-String | Invoke-Expression
-Register-ArgumentCompleter -Native -CommandName '{bin}' -ScriptBlock {
-    param($wordToComplete, $commandAst, $cursorPosition)
-    $words = @($commandAst.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.ToString() })
-    if ($wordToComplete -eq '') { $words += '' }
-    & '{bin}' __complete @words 2>$null | ForEach-Object {
-        $parts = $_ -split "`t", 2
-        $desc = if ($parts.Count -gt 1) { $parts[1] } else { $parts[0] }
-        [System.Management.Automation.CompletionResult]::new($parts[0], $parts[0], 'ParameterValue', $desc)
-    }
-}
-"#;
 
 #[cfg(test)]
 mod tests {

@@ -17,7 +17,7 @@ from pathlib import Path
 # 3,650,216 bytes at v0.1.44-beta.901 (after phase 4); 3,518,400 at
 # v0.1.44-beta.902 (packed help text, one shared sort). Budget: the CI size
 # the latest cut predicts (local delta applied) plus 2%.
-LINUX_X86_64_BUDGET_BYTES = 3_584_500
+LINUX_X86_64_BUDGET_BYTES = 3_579_931
 BUDGET_ASSET = "anyr-linux-x86_64"
 # Median wall time each local command must stay under on the budget asset.
 STARTUP_BUDGET_MS = 5.0

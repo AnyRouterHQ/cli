@@ -1,0 +1,27 @@
+{bin} publish — send a JSON document to an AnyRouter app
+
+Usage:
+  {bin} publish <app> [file|-] [--visibility unlisted|private|public] [--yes] [--dry-run] [--json]
+  {bin} publish <app> <page.html|figure.svg> [--light <page-light.html>] [options]
+
+Reads the document from <file>, or from stdin with `-` (or when piped with no file).
+It is checked locally against the app's published JSON Schema first; problems are
+listed by field and nothing is uploaded (exit 2). On success the URL is printed.
+
+An .html or .svg file is uploaded as a page when the app takes uploads (see
+`upload` in `{bin} apps schema <app>`). A sibling <name>-light.<ext> is sent as
+the light build; pass --light <file> to name it yourself.
+
+Examples
+  $ {bin} apps schema explain > schema.json     # what an agent must produce
+  $ <agent produces explain json> | {bin} publish explain -
+  $ {bin} publish explain fig.json --visibility public --yes
+  $ {bin} publish explain fig.json --dry-run
+  $ {bin} publish explain page.html --dry-run    # page.html + page-light.html
+
+Visibility: unlisted (default; link works, not listed), private (only you),
+public (listed after review). Re-running the same document is safe: it carries a
+stable Idempotency-Key, so the server returns the original instead of a copy.
+
+Exit codes: 0 ok, 1 error, 2 usage or invalid document, 3 not found, 4 auth, 5 rate limited,
+6 needs --yes, 7 network, 8 payment required.

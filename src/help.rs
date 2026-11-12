@@ -283,6 +283,43 @@ fn page(bin: &str, name: &str) -> String {
     fill(bin, &doc(name))
 }
 
+/// Help topics printed straight from `assets/help/<topic>.txt`.
+fn is_page(topic: &str) -> bool {
+    matches!(
+        topic,
+        "auth"
+            | "login"
+            | "token"
+            | "switch"
+            | "usage"
+            | "decision"
+            | "whoami"
+            | "account"
+            | "logs"
+            | "generation"
+            | "presets"
+            | "mcp"
+            | "models"
+            | "config"
+            | "chat"
+            | "relay"
+            | "byok"
+            | "artifact"
+            | "task"
+            | "delegate"
+            | "keys"
+            | "logout"
+            | "upgrade"
+            | "transactions"
+            | "embed"
+            | "eval"
+            | "schema"
+            | "telemetry"
+            | "report"
+            | "completion"
+    )
+}
+
 pub fn command_help(command: &str) -> Option<String> {
     let bin = invoked_bin();
     let canonical = match command {
@@ -297,52 +334,23 @@ pub fn command_help(command: &str) -> Option<String> {
         other => other,
     };
     Some(match canonical {
-        "auth" => page(&bin, "auth"),
-        "login" => page(&bin, "login"),
-        "token" => page(&bin, "token"),
-        "switch" => page(&bin, "switch"),
-        "usage" => page(&bin, "usage"),
-        "decision" => page(&bin, "decision"),
-        "whoami" => page(&bin, "whoami"),
-        "account" => page(&bin, "account"),
-        "logs" => page(&bin, "logs"),
-        "generation" => page(&bin, "generation"),
-        "presets" => page(&bin, "presets"),
-        "mcp" => page(&bin, "mcp"),
-        "models" => page(&bin, "models"),
-        "config" => page(&bin, "config"),
-        "chat" => page(&bin, "chat"),
+        topic if is_page(topic) => page(&bin, topic),
         "skills" => fill(
             &bin,
             "{bin} skills — not yet in the native CLI (coming later).\n",
         ),
-        "relay" => page(&bin, "relay"),
-        "byok" => page(&bin, "byok"),
-        "artifact" => page(&bin, "artifact"),
-        "task" => page(&bin, "task"),
-        "delegate" => page(&bin, "delegate"),
-        "keys" => page(&bin, "keys"),
         "audit" => fill(
             &bin,
             "{bin} audit — not yet in the native CLI (coming later).\n",
         ),
-        "logout" => page(&bin, "logout"),
-        "upgrade" => page(&bin, "upgrade"),
-        "transactions" => page(&bin, "transactions"),
-        "embed" => page(&bin, "embed"),
-        "eval" => page(&bin, "eval"),
         "menu" => fill(
             &bin,
             "{bin} menu — fullscreen launcher (default on a TTY)\n\nUsage:\n  {bin}                 Same as `{bin} menu` on a TTY\n  {bin} menu [--dump-tui]\n\nAccount, model, credits in a header. Launch agents, configure, quit.\n↑↓ / j k move, ↵ select (signs in and installs if needed), q/esc quit.\nSet ANYR_TUI=0 for inline HUD.\n\n`--dump-tui` / ANYR_TUI_DUMP=1 prints one plain frame and exits.\n",
         ),
         "commands" => commands_help(),
-        "schema" => page(&bin, "schema"),
-        "telemetry" => page(&bin, "telemetry"),
-        "report" => page(&bin, "report"),
         "api" => crate::api::help(),
         "publish" => crate::publish::publish_help(),
         "apps" => crate::publish::apps_help(),
-        "completion" => page(&bin, "completion"),
         "prompt" => fill(
             &bin,
             "{bin} prompt — hub prompts not yet in the native CLI. Use {bin} onboard for agent paste prompts.\n",
