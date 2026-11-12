@@ -529,7 +529,8 @@ Settings:
   {bin} config set launcher.claude.args -- --verbose
 
 Values that start with `-` go after `--`. `{bin} models --pick` chooses a
-model. `--dump-tui` prints one settings frame and exits.
+model. `--dump-tui` prints one settings frame and exits. Off a terminal the
+dump skips the account lookup and credits; `--verbose` adds them.
 ";
 
 const KEYS: &str = "\

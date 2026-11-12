@@ -43,8 +43,12 @@ pub(crate) fn print_config_status(
     let profile = cfg.profiles.get(&cfg.active_profile);
     let key = resolve_api_key(&parsed.flags, env, profile);
     let base = resolve_base_url(&parsed.flags, profile);
-    let me = key.as_deref().and_then(|k| fetch_me(&base, k).ok());
-    let credits_res = key.as_deref().map(|k| fetch_credits(&base, k));
+    // Account and credits cost two network calls; a pipe or script gets the
+    // local settings at once unless it asks with --verbose.
+    let online = term::is_interactive() || parsed.flag_true("verbose");
+    let key_online = key.as_deref().filter(|_| online);
+    let me = key_online.and_then(|k| fetch_me(&base, k).ok());
+    let credits_res = key_online.map(|k| fetch_credits(&base, k));
     let restricted = matches!(&credits_res, Some(Err(e)) if e.contains(crate::http::SCOPE_ERROR));
     let credits = credits_res.and_then(Result::ok);
     let account = me
@@ -91,17 +95,19 @@ pub(crate) fn print_config_status(
             .unwrap_or(crate::config::DEFAULT_PRESET),
     );
     row("agent", &agent);
-    println!(
-        "  {}  {}",
-        term::dim(&format!("{:<12}", "credits")),
-        if restricted {
-            term::dim("- (restricted key: no credits scope)")
-        } else if credits_value == "-" {
-            term::dim("-")
-        } else {
-            term::ok(&credits_value)
-        }
-    );
+    if online {
+        println!(
+            "  {}  {}",
+            term::dim(&format!("{:<12}", "credits")),
+            if restricted {
+                term::dim("- (restricted key: no credits scope)")
+            } else if credits_value == "-" {
+                term::dim("-")
+            } else {
+                term::ok(&credits_value)
+            }
+        );
+    }
     row("channel", cfg.channel());
     println!(
         "  {}  {}",

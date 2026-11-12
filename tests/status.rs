@@ -113,3 +113,49 @@ fn failed_key_lookup_is_short_on_stdout_and_full_with_verbose() {
         "{err}"
     );
 }
+
+#[test]
+fn piped_config_get_makes_no_network_call() {
+    // WHY: `config get` in a script or pipe reads local settings; it waited
+    // on /me and /credits in series (p50 369 ms) for lines nobody parses.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/api", listener.local_addr().unwrap());
+    for args in [&["config", "get"][..], &["config"][..]] {
+        let (code, out, err) = run(&base, args, None);
+        assert_eq!(code, 0, "{args:?}: {out}{err}");
+        assert!(out.contains("sk-ar-v1-testk…6789"), "{args:?}: {out}");
+        assert!(out.contains("model"), "{args:?}: {out}");
+        assert!(!out.contains("credits "), "{args:?}: {out}");
+    }
+    listener.set_nonblocking(true).unwrap();
+    assert!(
+        matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+        "config get opened a connection"
+    );
+}
+
+#[test]
+fn piped_config_get_is_fast_against_an_unroutable_host() {
+    // WHY: offline (192.0.2.0/24 never routes) the old dump hung on connect.
+    let t0 = std::time::Instant::now();
+    let (code, out, err) = run("http://192.0.2.1:9/api", &["config", "get"], None);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("sk-ar-v1-testk…6789"), "{out}");
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(3),
+        "took {:?}",
+        t0.elapsed()
+    );
+}
+
+#[test]
+fn verbose_config_get_still_shows_account_and_credits() {
+    let base = serve_routes(vec![
+        ("/api/v1/me", 200, ME.into()),
+        ("/api/v1/credits", 200, r#"{"balance":53.0794}"#.into()),
+    ]);
+    let (code, out, err) = run(&base, &["config", "get", "--verbose"], None);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("duyet"), "{out}");
+    assert!(out.contains("$53.08"), "{out}");
+}

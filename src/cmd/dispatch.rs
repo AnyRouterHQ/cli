@@ -468,7 +468,7 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
         ],
         "whoami" => &["profile", "config", "json", "key", "base-url", "verbose"],
         "config" => &[
-            "config", "json", "key", "base-url", "profile", "dump-tui", "pick",
+            "config", "json", "key", "base-url", "profile", "dump-tui", "pick", "verbose",
         ],
         "account" => &[
             "yes",
