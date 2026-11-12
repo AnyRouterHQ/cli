@@ -124,8 +124,9 @@ fn set(env: &BTreeMap<String, String>, on: bool) -> Result<Value, String> {
         // Counts not yet sent are dropped with the switch, under the lock a
         // run exiting right now writes them with.
         let dir = crate::autoupdate::state_dir(env);
-        // Crash reports not yet sent go too.
+        // Crash reports not yet sent and the last error go too.
         let _ = std::fs::remove_dir_all(crate::crash::dir(&dir));
+        let _ = std::fs::remove_file(crate::report::last_error_path(&dir));
         if crate::counters::path(&dir).exists() {
             let _ =
                 crate::counters::locked(&dir, || std::fs::remove_file(crate::counters::path(&dir)));

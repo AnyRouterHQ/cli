@@ -354,6 +354,16 @@ fn dispatch(
             println!("{}", text.unwrap_or_else(|_| "{}".into()));
             Ok(0)
         }
+        "report" => {
+            #[cfg(feature = "native")]
+            {
+                crate::cmd::report::run(parsed, env)
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                stub("report")
+            }
+        }
         "telemetry" => {
             #[cfg(feature = "native")]
             {

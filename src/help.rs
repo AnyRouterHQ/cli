@@ -355,6 +355,7 @@ pub fn command_help(command: &str) -> Option<String> {
         "commands" => commands_help(),
         "schema" => fill(&bin, SCHEMA),
         "telemetry" => fill(&bin, TELEMETRY),
+        "report" => fill(&bin, REPORT),
         "api" => crate::api::help(),
         "publish" => crate::publish::publish_help(),
         "apps" => crate::publish::apps_help(),
@@ -1168,6 +1169,27 @@ Always JSON on stdout (schema anyr.schema/v2). Each entry has name, summary,
 aliases, subcommands, flags ({name, type: bool|string|int|enum, required,
 enum?, env?}), positional args, auth (none|sk|ak), mutating, json and the
 exit codes it can return. An unknown command exits 3.
+";
+
+const REPORT: &str = "{bin} report — a redacted bug report to paste or file
+
+Usage:
+  {bin} report                     This machine's anyr facts (version, os, install,
+                                   update state, agent versions)
+  {bin} report --last              Plus the last error and the newest crash report
+  {bin} report --last --file       File it on GitHub (asks first; --yes in scripts)
+
+Everything goes through one redaction pass: no keys, paths, file names,
+flags, quoted text, your login name or hostname. Nothing is filed without --file.
+With gh on PATH it comments on an open issue with the same fingerprint or
+opens one labelled `captured`; without gh it prints a prefilled issue URL.
+
+Options:
+  --last          Include the last error and the newest crash
+  --title <text>  Issue title (redacted too)
+  --file          File the report as a GitHub issue
+  --yes           Do not ask before filing
+  --json          JSON on stdout
 ";
 
 const TELEMETRY: &str = "{bin} telemetry — anonymous usage pings

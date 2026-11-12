@@ -85,19 +85,7 @@ impl State {
         };
         // The file is user-writable and `last_version` rides `cli_update` as
         // `from_version`: only a version-shaped string may come back.
-        let version_like = |v: &String| {
-            let v = v.strip_prefix('v').unwrap_or(v);
-            let (core, rest) = v.split_at(v.find(['-', '+']).unwrap_or(v.len()));
-            let parts: Vec<&str> = core.split('.').collect();
-            v.len() <= 40
-                && parts.len() == 3
-                && parts
-                    .iter()
-                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-                && rest
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c))
-        };
+        let version_like = |v: &String| crate::report::clean_version(v);
         Self {
             install_id: get("install_id")
                 .filter(|id| id.len() <= 64 && id.chars().all(|c| c.is_ascii_hexdigit())),
@@ -589,6 +577,14 @@ pub fn on_exit(code: i32, env: &BTreeMap<String, String>) {
         // deletes the file under this same lock.
         if crate::key::load_config_if_present(&config).and_then(|c| c.telemetry) != Some(false) {
             crate::counters::record(dir, crate::autoupdate::now_secs() / SECS_PER_DAY, &run);
+            // A failed run (not an agent's own exit, not `report` itself)
+            // leaves a redacted note for `anyr report --last`.
+            if run.error.is_some() && run.command != "report" {
+                let message = crate::counters::last_error()
+                    .map(|(_, m)| m)
+                    .unwrap_or_default();
+                crate::report::save_last_error(dir, &run, code, &message);
+            }
         }
     });
 }

@@ -517,7 +517,7 @@ On a terminal, bare `anyr` / `anyr menu` opens the Ratatui launcher by default.
 Pipes and CI still get `--help` (or `anyr menu --dump-tui` for a plain frame).
 
 Release size is tracked on every PR (`scripts/bench.py`): stripped
-`anyr-linux-x86_64` must stay ≤ 3,643,200 bytes (raised on purpose for crash capture),
+`anyr-linux-x86_64` must stay ≤ 3,662,768 bytes (raised on purpose for crash capture and `anyr report`),
 and `--version`, `--help`, `account --json` and `claude --dry-run --json` must
 each start in ≤ 5 ms median. Locally:
 
@@ -724,6 +724,17 @@ is not saved; `anyr telemetry off` deletes reports not yet sent. When 20
 files exist, a sent one makes room for a new bug. Signals such as a
 segfault or a kill are not caught.
 
+A failed run (not a launched agent's own exit code) also leaves
+`~/.anyrouter/last-error.json`: the command name, exit code and its name, the
+error code as above, the redacted message, the version, the time and a
+fingerprint. It never leaves the machine on its own. `anyr report --last`
+prints it with the newest crash report, the install method, the update state
+and agent versions, all through the same redaction; `--json` prints it as
+JSON. Only `anyr report --last --file` sends it anywhere: with `gh` installed
+it comments on an open issue in AnyRouterHQ/cli that names the same
+fingerprint, or opens one labelled `captured`; without `gh` it prints a
+prefilled issue link. Off a terminal `--file` needs `--yes`.
+
 The install and update events are sent while the command runs (they are
 rare). The daily event is handed to a detached child (payload on stdin, only
 the endpoint in its environment), so the first command of a day never waits
@@ -749,7 +760,7 @@ export ANYR_TELEMETRY=0     # or ANYR_NO_TELEMETRY=1, or DO_NOT_TRACK=1
 
 It is also off in CI, in `cargo` builds, and while `ANYR_NO_UPDATE` is set.
 While it is off nothing is sent and nothing is written, not even the install
-id, the counts or a crash report; `anyr telemetry off` also deletes counts not yet sent.
+id, the counts, a crash report or the last error; `anyr telemetry off` also deletes counts not yet sent.
 
 ## Documentation
 

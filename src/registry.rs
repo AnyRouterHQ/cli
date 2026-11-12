@@ -388,6 +388,11 @@ pub const SPECS: &[Spec] = &[
     edit("telemetry on", &[]),
     edit("telemetry off", &[]),
     edit("telemetry reset", &[]),
+    // Prints locally; `--file` posts through gh and asks first.
+    Spec {
+        confirms: true,
+        ..local("report", &[])
+    },
     local("help", &["[topic]"]),
 ];
 
@@ -675,6 +680,7 @@ mod tests {
             "delegate",
             "schema",
             "telemetry",
+            "report",
         ];
         for c in implemented {
             assert_eq!(cmd_kind(c), Some(CmdKind::Implemented), "{c}");

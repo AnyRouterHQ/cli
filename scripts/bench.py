@@ -14,10 +14,11 @@ from pathlib import Path
 
 # Ratchet for the stripped linux x86_64 release binary: the last measured CI
 # size plus 2%. Lower it after each size cut; raise it only on purpose.
-# 3,536,328 bytes at v0.1.44-beta.865. Raised on purpose to 3,643,200, the
-# local stripped size with crash capture and redaction (CI builds ~12 KB
-# smaller); lower it again after the next size cut.
-LINUX_X86_64_BUDGET_BYTES = 3_643_200
+# 3,536,328 bytes at v0.1.44-beta.865. Raised on purpose for phase 4
+# (telemetry counters, crash capture, redaction, `anyr report`): 3,662,768 is
+# the local stripped size with `anyr report`; CI built 3,626,424 the commit
+# before it. Lower it again after the next size cut.
+LINUX_X86_64_BUDGET_BYTES = 3_662_768
 BUDGET_ASSET = "anyr-linux-x86_64"
 # Median wall time each local command must stay under on the budget asset.
 STARTUP_BUDGET_MS = 5.0

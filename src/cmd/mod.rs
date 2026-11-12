@@ -26,6 +26,8 @@ pub(crate) mod models;
 pub(crate) mod pool;
 pub(crate) mod portable;
 pub(crate) mod presets;
+#[cfg(feature = "native")]
+pub(crate) mod report;
 pub(crate) mod settings;
 pub(crate) mod status;
 #[cfg(feature = "native")]

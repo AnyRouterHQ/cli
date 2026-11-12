@@ -185,7 +185,9 @@ fn owns(owned: &[&str], arg: &str) -> bool {
 /// commas. Every other value flag keeps last-wins.
 /// `--status` filters lists elsewhere, but on `update` it is a switch.
 pub(crate) fn takes_value(command: &str, name: &str) -> bool {
-    VALUE_FLAGS.contains(name) && !(matches!(command, "update" | "upgrade") && name == "status")
+    VALUE_FLAGS.contains(name)
+        && !(matches!(command, "update" | "upgrade") && name == "status")
+        && !(command == "report" && name == "file")
 }
 
 fn insert_value_flag(

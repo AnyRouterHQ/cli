@@ -134,11 +134,7 @@ pub fn sanitize(v: &Value) -> Option<Value> {
         .filter_map(|c| CRUMBS.iter().find(|k| **k == c).copied())
         .collect();
     let version = s("version");
-    let version_ok = !version.is_empty()
-        && version.len() <= 40
-        && version
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c));
+    let version_ok = crate::report::clean_version(version);
     if !version_ok {
         return None;
     }
@@ -218,7 +214,7 @@ mod native {
         eprintln!("anyr crashed at {location}: {message}");
         if saved {
             eprintln!(
-                "A redacted crash report was saved and goes out with the next run (`anyr telemetry off` stops that)."
+                "A redacted crash report was saved and goes out with the next run; `anyr report --last` shows it, `anyr telemetry off` stops it."
             );
         }
     }

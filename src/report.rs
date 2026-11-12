@@ -8,6 +8,7 @@
 //! directory, temp directory, username and hostname. The result is capped at
 //! 200 characters.
 
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 /// Longest free text that leaves the machine.
@@ -320,6 +321,150 @@ pub fn fingerprint(location: &str, redacted: &str) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// A `last-error.json` record, every field from a closed set except the
+/// redacted message.
+pub fn last_error(command: &str, code: i32, message: &str, version: &str, time: u64) -> Value {
+    let message = redact(message);
+    let command = crate::counters::command_slot(command);
+    json!({
+        "command": command,
+        "exit": code,
+        "code": crate::counters::exit_slot(code, false),
+        "error": crate::counters::error_slot(code, &message),
+        "message": message,
+        "version": version,
+        "time": time,
+        "fingerprint": fingerprint(&format!("error:{command}:{code}"), &message),
+    })
+}
+
+/// A record read back from disk, rebuilt so an edited file cannot add text.
+pub fn sanitize_last_error(v: &Value) -> Option<Value> {
+    let version = v.get("version")?.as_str()?;
+    if !clean_version(version) {
+        return None;
+    }
+    Some(last_error(
+        v.get("command")?.as_str()?,
+        v.get("exit")?.as_i64()? as i32,
+        v.get("message").and_then(Value::as_str).unwrap_or_default(),
+        version,
+        v.get("time").and_then(Value::as_u64).unwrap_or(0),
+    ))
+}
+
+/// A release version read back from a user-writable file: `0.1.44`,
+/// `0.1.44-beta.7`, `0.1.44-rc.1` or this build's own version, nothing
+/// else (a prerelease part could otherwise carry any text).
+pub fn clean_version(s: &str) -> bool {
+    let core = s.strip_prefix('v').unwrap_or(s);
+    let (head, pre) = match core.split_once('-') {
+        Some((h, p)) => (h, Some(p)),
+        None => (core, None),
+    };
+    let parts: Vec<&str> = head.split('.').collect();
+    let shaped = !s.is_empty()
+        && s.len() <= 40
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".+-".contains(c))
+        && parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        && pre.is_none_or(|p| p.starts_with("beta") || p.starts_with("rc"));
+    shaped || s == crate::VERSION
+}
+
+#[cfg(feature = "native")]
+pub use native::*;
+
+#[cfg(feature = "native")]
+mod native {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    /// A version string or nothing.
+    fn version_or_null(v: Option<&str>) -> Value {
+        v.filter(|s| clean_version(s))
+            .map_or(Value::Null, |s| json!(s))
+    }
+
+    pub fn last_error_path(dir: &Path) -> PathBuf {
+        dir.join("last-error.json")
+    }
+
+    pub fn save_last_error(dir: &Path, run: &crate::counters::Run, code: i32, message: &str) {
+        let rec = last_error(
+            run.command,
+            code,
+            message,
+            crate::VERSION,
+            crate::autoupdate::now_secs(),
+        );
+        let _ = crate::config::write_private(&last_error_path(dir), format!("{rec}\n").as_bytes());
+    }
+
+    fn read(path: &Path) -> Option<Value> {
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    }
+
+    /// The one report bundle (`anyr report`): this machine's anyr facts and,
+    /// with `last`, the last error and the newest crash. Everything is
+    /// rebuilt from closed sets or passed through `redact`.
+    pub fn bundle(env: &BTreeMap<String, String>, last: bool) -> Value {
+        let dir = crate::autoupdate::state_dir(env);
+        let update = crate::autoupdate::UpdateState::load(env);
+        let mut agents = serde_json::Map::new();
+        if let Some(Value::Object(rows)) = read(&dir.join("tool-versions.json")) {
+            for (key, row) in rows {
+                let base = key.rsplit(['/', '\\']).next().unwrap_or_default();
+                let base = base.strip_suffix(".exe").unwrap_or(base);
+                if let (Some(name), Some(major)) = (
+                    crate::registry::LAUNCHERS.iter().find(|l| **l == base),
+                    row.get("major").and_then(Value::as_u64),
+                ) {
+                    agents.insert(name.to_string(), json!(major));
+                }
+            }
+        }
+        let (last_error, crash) = if last {
+            (
+                read(&last_error_path(&dir)).and_then(|v| sanitize_last_error(&v)),
+                crate::crash::newest(&crate::crash::dir(&dir)),
+            )
+        } else {
+            (None, None)
+        };
+        let fingerprint = crash
+            .as_ref()
+            .or(last_error.as_ref())
+            .map(|v| v["fingerprint"].clone());
+        json!({
+            "version": crate::VERSION,
+            "channel": if crate::VERSION.contains("beta") { "beta" } else { "stable" },
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "install_method": std::env::current_exe()
+                .map(|exe| crate::telemetry::install_method(&exe))
+                .unwrap_or("manual"),
+            "fingerprint": fingerprint,
+            "last_error": last_error,
+            "crash": crash,
+            "update": {
+                "channel": update.channel.as_deref().filter(|c| matches!(*c, "stable" | "beta")),
+                "latest_seen": version_or_null(update.latest_seen.as_deref()),
+                "pending_version": version_or_null(update.pending_version.as_deref()),
+                "skip_version": version_or_null(update.skip_version.as_deref()),
+                "last_error": update.last_error.as_deref().map(redact),
+                "last_check_age_secs": (update.last_check > 0)
+                    .then(|| crate::autoupdate::now_secs().saturating_sub(update.last_check)),
+            },
+            "agents": agents,
+        })
+    }
 }
 
 /// What no payload, crash file or report may contain, as a check tests and
@@ -656,6 +801,9 @@ mod fuzz {
                 crate::crash::payload(id, &crash),
                 crate::crash::payload(id, &crate::crash::sanitize(&crash).unwrap()),
                 Value::String(redact(&message)),
+                last_error(&argv[0], code, &message, crate::VERSION, 0),
+                sanitize_last_error(&last_error(&argv[0], code, &message, crate::VERSION, 0))
+                    .unwrap(),
             ];
             for b in &bodies {
                 assert_clean(&b.to_string(), &secrets);
@@ -663,6 +811,6 @@ mod fuzz {
             }
             let _ = case;
         }
-        assert!(checked >= CASES * 6);
+        assert!(checked >= CASES * 8);
     }
 }
