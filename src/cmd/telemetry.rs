@@ -38,8 +38,19 @@ fn status(env: &BTreeMap<String, String>) -> Value {
     let st = t::status(env);
     let id = t::load_state(env).install_id;
     // While off nothing is sent, so there is no next payload to show.
-    let next = (st.on && id.is_some())
-        .then(|| event(&st, id.as_deref().unwrap_or_default(), &Kind::Daily));
+    let today = crate::autoupdate::now_secs() / t::SECS_PER_DAY;
+    let usage = crate::counters::before(
+        &crate::counters::load(&crate::autoupdate::state_dir(env)),
+        today,
+    );
+    let next = (st.on && id.is_some()).then(|| {
+        event(
+            &st,
+            id.as_deref().unwrap_or_default(),
+            &Kind::Daily,
+            usage.as_ref(),
+        )
+    });
     json!({
         "enabled": st.on,
         "reason": st.why,
@@ -49,12 +60,12 @@ fn status(env: &BTreeMap<String, String>) -> Value {
     })
 }
 
-fn event(st: &t::Status, id: &str, kind: &Kind) -> Value {
+fn event(st: &t::Status, id: &str, kind: &Kind, usage: Option<&crate::counters::Day>) -> Value {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     if st.otlp {
         t::otlp_payload(id, kind, crate::VERSION, os, arch)
     } else {
-        t::payload(id, kind, crate::VERSION, os, arch)
+        t::payload(id, kind, crate::VERSION, os, arch, t::extra(kind, usage))
     }
 }
 
@@ -71,10 +82,26 @@ fn samples(env: &BTreeMap<String, String>) -> Value {
         },
         Kind::Daily,
     ];
+    // A made-up day, so the sample shows every counter field filled in.
+    let mut day = crate::counters::Day::default();
+    day.add(&crate::counters::Run {
+        command: "claude",
+        exit: "agent",
+        error: None,
+        agent: Some("claude"),
+        bucket: 0,
+    });
+    day.add(&crate::counters::Run {
+        command: "models",
+        exit: "network",
+        error: Some("network"),
+        agent: None,
+        bucket: 1,
+    });
     json!({
         "enabled": st.on,
         "endpoint": st.url,
-        "events": kinds.iter().map(|k| event(&st, &id, k)).collect::<Vec<_>>(),
+        "events": kinds.iter().map(|k| event(&st, &id, k, Some(&day))).collect::<Vec<_>>(),
     })
 }
 
@@ -83,6 +110,15 @@ fn set(env: &BTreeMap<String, String>, on: bool) -> Result<Value, String> {
     let mut cfg = crate::key::load_config_if_present(&path).unwrap_or_default();
     cfg.telemetry = Some(on);
     crate::config::write_config(&cfg, &path)?;
+    if !on {
+        // Counts not yet sent are dropped with the switch, under the lock a
+        // run exiting right now writes them with.
+        let dir = crate::autoupdate::state_dir(env);
+        if crate::counters::path(&dir).exists() {
+            let _ =
+                crate::counters::locked(&dir, || std::fs::remove_file(crate::counters::path(&dir)));
+        }
+    }
     let st = t::status(env);
     Ok(json!({ "enabled": st.on, "reason": st.why }))
 }

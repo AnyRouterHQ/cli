@@ -233,7 +233,114 @@ fn every_opt_out_sends_nothing_and_writes_nothing() {
             "{name}: a ping was sent"
         );
         assert!(!state(&home).exists(), "{name}: wrote an install id");
+        assert!(!usage(&home).exists(), "{name}: wrote counters");
     }
+}
+
+fn usage(home: &Path) -> std::path::PathBuf {
+    home.join("anyr").join("usage.json")
+}
+
+fn today() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86400)
+        .unwrap()
+}
+
+#[test]
+fn counters_hold_registry_names_only_and_ride_the_next_daily_ping() {
+    // WHY: the counters are the one place argv could leak into a payload;
+    // a secret typed as a command or flag must come out as `other`/`usage`.
+    let home = common::unique_temp_dir("anyr-telemetry-counters");
+    let (url, rx) = capture_server();
+    let secret = "sk-ar-v1-countersecret0123456789";
+    let _ = anyr_args(&home, &url, &["--version"], &[]);
+    assert!(!usage(&home).exists(), "--version is not counted");
+    assert!(anyr_args(&home, &url, &["help"], &[]).status.success());
+    rx.recv_timeout(Duration::from_secs(5)).expect("install");
+    let bad = anyr_args(&home, &url, &[secret, "--key", secret], &[]);
+    assert_eq!(bad.status.code(), Some(2));
+    let bad = anyr_args(
+        &home,
+        &url,
+        &["models", "--no-such-flag", "/home/me/x"],
+        &[],
+    );
+    assert_eq!(bad.status.code(), Some(2));
+
+    let raw = std::fs::read_to_string(usage(&home)).unwrap();
+    assert!(
+        !raw.contains("countersecret") && !raw.contains("/home/"),
+        "{raw}"
+    );
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let day = &v[today().to_string()];
+    assert_eq!(day["commands"]["help"], 1, "{raw}");
+    assert_eq!(day["commands"]["other"], 1, "{raw}");
+    assert_eq!(day["commands"]["models"], 1, "{raw}");
+    assert_eq!(day["exit"]["ok"], 1, "{raw}");
+    assert_eq!(day["exit"]["usage"], 2, "{raw}");
+    assert_eq!(day["errors"]["usage"], 2, "{raw}");
+    assert!(day["slowest"].is_string(), "{raw}");
+
+    // Move those counts to yesterday and make the daily ping due.
+    let yesterday = today() - 1;
+    std::fs::write(usage(&home), format!(r#"{{"{yesterday}":{day}}}"#)).unwrap();
+    let mut st: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state(&home)).unwrap()).unwrap();
+    st["last_daily"] = yesterday.into();
+    std::fs::write(state(&home), st.to_string()).unwrap();
+    anyr(&home, &url, &[]);
+    let body = rx.recv_timeout(Duration::from_secs(5)).expect("daily");
+    assert_eq!(body["event"], "cli_daily");
+    let props = &body["properties"];
+    assert_eq!(props["commands"]["help"], 1);
+    assert_eq!(props["exit"]["usage"], 2);
+    assert_eq!(props["slowest"], day["slowest"]);
+    let left: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(usage(&home)).unwrap()).unwrap();
+    assert!(
+        left.get(yesterday.to_string()).is_none(),
+        "sent days are cleared: {left}"
+    );
+    assert_eq!(left[today().to_string()]["commands"]["help"], 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_launcher_counts_its_agent_and_the_agents_own_exit_code() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = common::unique_temp_dir("anyr-telemetry-agent");
+    let (url, _rx) = capture_server();
+    let agent = home.join("fake-claude");
+    std::fs::write(&agent, "#!/bin/sh\nsleep 1.2\nexit 3\n").unwrap();
+    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = anyr_args(
+        &home,
+        &url,
+        &[
+            "claude",
+            "--yes",
+            "--no-mcp",
+            "--key",
+            "sk-ar-v1-fixture-key-0001",
+            "--command-path",
+            agent.to_str().unwrap(),
+        ],
+        &[("ANYR_NO_CATALOG", "1")],
+    );
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(usage(&home)).unwrap()).unwrap();
+    let day = &v[today().to_string()];
+    assert_eq!(day["commands"]["claude"], 1, "{day}");
+    assert_eq!(day["agents"]["claude"], 1, "{day}");
+    assert_eq!(day["exit"]["agent"], 1, "{day}");
+    assert!(day["errors"].as_object().unwrap().is_empty(), "{day}");
+    // anyr's own time ends at the spawn, not when the agent session ends.
+    let slowest = day["slowest"].as_str().unwrap();
+    assert!(matches!(slowest, "<100ms" | "<1s"), "{day}");
 }
 
 fn json(out: &std::process::Output) -> serde_json::Value {

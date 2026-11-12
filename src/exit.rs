@@ -163,6 +163,8 @@ fn name(code: i32) -> &'static str {
 /// `{"error":{"code","exit","message","hint"}}` in JSON mode.
 pub fn print(code: i32, message: &str) {
     let (_, message) = classify(message);
+    #[cfg(feature = "native")]
+    crate::counters::note_error(code, &message);
     let message = with_next_step(&message);
     let message = message.as_str();
     if message.trim().is_empty() {

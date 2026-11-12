@@ -1933,7 +1933,11 @@ pub fn spawn_child(
         .stderr(Stdio::inherit())
         .status()
     {
-        Ok(st) => st.code().unwrap_or(1),
+        Ok(st) => {
+            // The run's exit code is now the agent's own.
+            crate::counters::agent_returned();
+            st.code().unwrap_or(1)
+        }
         Err(err) => {
             eprintln!("Could not start \"{command}\": {err}");
             1

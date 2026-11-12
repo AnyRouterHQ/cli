@@ -657,24 +657,64 @@ set yourself.
 
 ## Telemetry
 
-`anyr` sends one anonymous ping the first time it runs, again after each
-update, and once more per UTC day on the first command of that day, so we
-can count installs, versions and daily active users. It holds a random
-install id, the `anyr` version, the OS and the CPU architecture. It never
-holds your key, paths, hostname, IP address, prompts or which subcommand
-you ran, and PostHog is told not to build a person profile or look up a
-location. The daily ping runs in a detached child (payload on stdin, only
-the endpoint in its environment), so the first command of a day never
-waits on the network. The exact payload is built in
-[`src/telemetry.rs`](src/telemetry.rs) and checked by `tests/telemetry.rs`.
+`anyr` sends anonymous events to PostHog so we can count installs, versions
+and daily users, and see which commands fail. PostHog is told not to build a
+person profile or look up a location. The exact payloads are built in
+[`src/telemetry.rs`](src/telemetry.rs) and [`src/counters.rs`](src/counters.rs)
+and checked by `tests/telemetry.rs`; `anyr telemetry status --dry-run` prints
+one of each.
 
-The first run on a terminal prints one line saying the pings are on and how
+Every event carries a random install id as `distinct_id` (made on this
+machine, not derived from any hardware), the `anyr` version, `os`, `arch`,
+`channel` (`stable` or `beta`), `$lib: anyr-cli`, and
+`$process_person_profile: false` plus `$geoip_disable: true`, which tell
+PostHog not to build a profile or look up a location, and PostHog's public
+project key (`api_key`, the one the website ships). On top of that:
+
+| Event | When | Extra fields |
+| --- | --- | --- |
+| `cli_install` | first run | `method`: `script` (`~/.local/bin`), `npm` (`node_modules` or `~/.anyrouter/binaries`), `brew` or `manual`, a word picked from where the binary lives (never the path) |
+| `cli_update` | first run of a new version | `from_version`, `result`: `ok`, or `rolled_back` when the version went down |
+| `cli_daily` | first run of each UTC day | the counts of the previous days, then deleted from this machine |
+
+The `cli_daily` counts are kept in `~/.anyrouter/usage.json`, added to once
+when a command exits:
+
+- `commands`: how often each command ran, by its name in `anyr help --all`
+  (aliases folded in); anything else, including a mistyped command, is
+  `other`.
+- `exit`: how runs ended, by exit-code name (`ok`, `error`, `usage`,
+  `not_found`, `auth`, `rate_limited`, `confirm_required`, `network`,
+  `payment_required`), `agent` for a launched agent's own non-zero exit,
+  else `other`.
+- `errors`: failed runs by the HTTP status their error names (`http_404`,
+  ..., `http_other`), else by exit-code name.
+- `agents`: how often each agent (`claude`, `codex`, ...) was launched.
+- `slowest`: the slowest run as a bucket: `<100ms`, `<1s`, `<10s`, `<1m` or
+  `>=1m`. For a launcher only `anyr`'s own time before the agent starts is
+  measured, never the agent session.
+
+Each name comes from a fixed list compiled into `anyr`; a key that is not on
+the list is dropped when the file is read. No event holds your keys or
+tokens, arguments or flags, file names or contents, paths, your username or
+hostname, prompts or responses, model ids, repository names, environment
+values or your IP address. A command line that does not parse counts as
+`usage`; `--version` and shell completion are not counted.
+
+The install and update events are sent while the command runs (they are
+rare). The daily event is handed to a detached child (payload on stdin, only
+the endpoint in its environment), so the first command of a day never waits
+on the network. With `telemetry_endpoint:` set in the config, the three events
+go there as OTLP metrics carrying the install id, version, `os`, `arch`,
+`channel` and `from_version` only; `method`, `result` and the daily counts are
+not sent there, and the counts are dropped.
+
+The first run on a terminal prints one line saying the events are on and how
 to turn them off; it never prints again, and never off a terminal, under
 `--json` or `--quiet`, or inside an agent `anyr` launched.
 
 `anyr telemetry status` prints whether it is on, which switch decided that,
-the install id, the endpoint and the exact payload of the next daily ping;
-`anyr telemetry status --dry-run` prints a sample of every event.
+the install id, the endpoint and the exact payload of the next daily event.
 `anyr telemetry reset` rotates the install id.
 
 Turn it off with any one of:
@@ -685,7 +725,8 @@ export ANYR_TELEMETRY=0     # or ANYR_NO_TELEMETRY=1, or DO_NOT_TRACK=1
 ```
 
 It is also off in CI, in `cargo` builds, and while `ANYR_NO_UPDATE` is set.
-While it is off nothing is written, not even the install id.
+While it is off nothing is sent and nothing is written, not even the install
+id or the counts; `anyr telemetry off` also deletes counts not yet sent.
 
 ## Documentation
 

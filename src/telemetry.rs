@@ -196,7 +196,16 @@ pub fn switch(
 }
 
 /// The exact JSON sent to PostHog. Nothing else leaves the machine.
-pub fn payload(install_id: &str, kind: &Kind, version: &str, os: &str, arch: &str) -> Value {
+/// `extra` adds fixed-shape properties: `method` on install, the day's
+/// counters on the daily ping.
+pub fn payload(
+    install_id: &str,
+    kind: &Kind,
+    version: &str,
+    os: &str,
+    arch: &str,
+    extra: Value,
+) -> Value {
     let mut props = json!({
         "$lib": "anyr-cli",
         "$process_person_profile": false,
@@ -208,6 +217,14 @@ pub fn payload(install_id: &str, kind: &Kind, version: &str, os: &str, arch: &st
     });
     if let Kind::Update { from } = kind {
         props["from_version"] = json!(from);
+        // A version change seen at startup is an update that worked; going
+        // back to an older build is a rollback.
+        let parse = crate::channel::parse_version;
+        let back = matches!((parse(from), parse(version)), (Some(f), Some(t)) if t < f);
+        props["result"] = json!(if back { "rolled_back" } else { "ok" });
+    }
+    if let (Value::Object(props), Value::Object(extra)) = (&mut props, extra) {
+        props.extend(extra);
     }
     json!({
         "api_key": POSTHOG_KEY,
@@ -215,6 +232,38 @@ pub fn payload(install_id: &str, kind: &Kind, version: &str, os: &str, arch: &st
         "distinct_id": install_id,
         "properties": props,
     })
+}
+
+/// How this binary was installed, from where it lives: Homebrew and npm own
+/// their paths, the install script writes `~/.local/bin`, anything else is
+/// manual. Only the word leaves the machine, never the path.
+pub fn install_method(exe: &std::path::Path) -> &'static str {
+    match crate::autoupdate::package_manager_hint(exe) {
+        Some(h) if h.starts_with("brew") => "brew",
+        Some(_) => "npm",
+        None if exe
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains("/.local/bin/") =>
+        {
+            "script"
+        }
+        None => "manual",
+    }
+}
+
+/// The extra properties of one event kind on this machine.
+#[cfg(feature = "native")]
+pub fn extra(kind: &Kind, usage: Option<&crate::counters::Day>) -> Value {
+    match kind {
+        Kind::Install => json!({
+            "method": std::env::current_exe()
+                .map(|exe| install_method(&exe))
+                .unwrap_or("manual"),
+        }),
+        Kind::Update { .. } => Value::Null,
+        Kind::Daily => usage.cloned().unwrap_or_default().to_json(),
+    }
 }
 
 /// 32 hex chars from the OS random source, mixed with the clock and pid so a
@@ -408,15 +457,50 @@ pub fn on_startup(env: &BTreeMap<String, String>, quiet: bool) {
     };
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
+    // Yesterday's counters ride the daily ping and leave the file with it;
+    // the OTLP form has no field for them, so they are dropped there.
+    let usage = (kind == Kind::Daily)
+        .then(|| {
+            let dir = gate.as_deref()?;
+            crate::counters::locked(dir, || crate::counters::take_before(dir, today))?
+        })
+        .flatten();
     let body = if st.otlp {
         otlp_payload(&id, &kind, crate::VERSION, os, arch)
     } else {
-        payload(&id, &kind, crate::VERSION, os, arch)
+        payload(
+            &id,
+            &kind,
+            crate::VERSION,
+            os,
+            arch,
+            extra(&kind, usage.as_ref()),
+        )
     };
     match kind {
         Kind::Daily => spawn_daily_sender(&body, &st.url),
         Kind::Install | Kind::Update { .. } => send(&st.url, &body),
     }
+}
+
+/// Runs once at process exit: adds this run to today's counters. Nothing
+/// before argument parsing is counted, and nothing is sent.
+#[cfg(feature = "native")]
+pub fn on_exit(code: i32, env: &BTreeMap<String, String>) {
+    let Some(run) = crate::counters::this_run(code) else {
+        return;
+    };
+    let Some(dir) = gate(env) else {
+        return;
+    };
+    let config = crate::config::resolve_config_path(None, env);
+    crate::counters::locked(dir, || {
+        // `anyr telemetry off` may have run since this run started; it
+        // deletes the file under this same lock.
+        if crate::key::load_config_if_present(&config).and_then(|c| c.telemetry) != Some(false) {
+            crate::counters::record(dir, crate::autoupdate::now_secs() / SECS_PER_DAY, &run);
+        }
+    });
 }
 
 /// Detached sender for the daily ping: payload on stdin (never argv), and
@@ -605,6 +689,7 @@ mod tests {
             "0.1.40-beta.7",
             "linux",
             "x86_64",
+            Value::Null,
         );
         let top: Vec<&str> = body
             .as_object()
@@ -630,17 +715,26 @@ mod tests {
                 "channel",
                 "from_version",
                 "os",
+                "result",
                 "version"
             ]
         );
         assert_eq!(body["event"], "cli_update");
+        assert_eq!(body["properties"]["result"], "ok");
         assert_eq!(body["properties"]["$process_person_profile"], false);
         assert_eq!(body["properties"]["channel"], "beta");
     }
 
     #[test]
     fn daily_payload_holds_only_the_promised_fields() {
-        let body = payload("abc", &Kind::Daily, "0.1.40", "linux", "x86_64");
+        let body = payload(
+            "abc",
+            &Kind::Daily,
+            "0.1.40",
+            "linux",
+            "x86_64",
+            crate::counters::Day::default().to_json(),
+        );
         assert_eq!(body["event"], "cli_daily");
         assert_eq!(body["distinct_id"], "abc");
         let mut props: Vec<&str> = body["properties"]
@@ -656,13 +750,57 @@ mod tests {
                 "$geoip_disable",
                 "$lib",
                 "$process_person_profile",
+                "agents",
                 "arch",
                 "channel",
+                "commands",
+                "errors",
+                "exit",
                 "os",
+                "slowest",
                 "version"
             ]
         );
         assert!(body["properties"].get("from_version").is_none());
+    }
+
+    #[test]
+    fn an_older_version_is_reported_as_a_rollback() {
+        let kind = Kind::Update {
+            from: "0.1.50".into(),
+        };
+        let body = payload("abc", &kind, "0.1.49", "linux", "x86_64", Value::Null);
+        assert_eq!(body["properties"]["result"], "rolled_back");
+        let odd = Kind::Update {
+            from: "dev-build".into(),
+        };
+        let body = payload("abc", &odd, "0.1.49", "linux", "x86_64", Value::Null);
+        assert_eq!(
+            body["properties"]["result"], "ok",
+            "unknown order is not a rollback"
+        );
+    }
+
+    #[test]
+    fn install_method_is_a_word_from_the_path_never_the_path() {
+        use std::path::Path;
+        assert_eq!(
+            install_method(Path::new("/opt/homebrew/Cellar/anyr/1/bin/anyr")),
+            "brew"
+        );
+        assert_eq!(
+            install_method(Path::new("/usr/lib/node_modules/@anyr/cli/anyr")),
+            "npm"
+        );
+        assert_eq!(
+            install_method(Path::new("/home/me/.local/bin/anyr")),
+            "script"
+        );
+        assert_eq!(
+            install_method(Path::new("C:\\Users\\me\\.local\\bin\\anyr.exe")),
+            "script"
+        );
+        assert_eq!(install_method(Path::new("/usr/local/bin/anyr")), "manual");
     }
 
     #[test]

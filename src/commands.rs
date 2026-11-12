@@ -31,16 +31,25 @@ use crate::cmd::transactions::run_transactions;
 use crate::cmd::usage::run_usage;
 
 pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
+    let env: BTreeMap<String, String> = env.into_iter().collect();
+    let code = run_inner(argv, &env);
+    // Counts this run locally; a no-op before argument parsing (`--version`,
+    // completion, the telemetry child) and while telemetry is off.
+    #[cfg(feature = "native")]
+    crate::telemetry::on_exit(code, &env);
+    code
+}
+
+fn run_inner(argv: Vec<String>, env: &BTreeMap<String, String>) -> i32 {
     let raw = if argv.first().map(String::as_str) == Some("--") {
         argv[1..].to_vec()
     } else {
         argv
     };
-    let env: BTreeMap<String, String> = env.into_iter().collect();
     // Completion callback runs before parsing: partial words like `--model`
     // with no value must not error, and nothing may hit the network.
     if raw.first().map(String::as_str) == Some("__complete") {
-        for line in crate::completion::complete(&raw[1..], &env) {
+        for line in crate::completion::complete(&raw[1..], env) {
             println!("{line}");
         }
         return 0;
@@ -50,7 +59,7 @@ pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
     // startup hooks, or the child would recurse.
     #[cfg(feature = "native")]
     if raw.first().map(String::as_str) == Some("__telemetry-daily") {
-        crate::telemetry::send_from_stdin(&env);
+        crate::telemetry::send_from_stdin(env);
         return 0;
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -66,11 +75,13 @@ pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
     let mut parsed = match parse_cli_args(&raw) {
         Ok(p) => p,
         Err(err) => {
-            crate::exit::set_json_errors(raw.iter().any(|a| a == "--json") || env_says_json(&env));
+            #[cfg(feature = "native")]
+            crate::counters::start(raw.first().map(String::as_str).unwrap_or_default());
+            crate::exit::set_json_errors(raw.iter().any(|a| a == "--json") || env_says_json(env));
             return usage_fail(&err);
         }
     };
-    let json_mode = parsed.flag_true("json") || env_says_json(&env);
+    let json_mode = parsed.flag_true("json") || env_says_json(env);
     crate::exit::set_json_errors(json_mode);
     if json_mode && !parsed.flags.contains_key("json") {
         parsed
@@ -94,16 +105,18 @@ pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
     // parse_cli_args maps empty argv to command "help". Check emptiness first
     // so a real terminal gets the TUI launcher, not --help. Dump mode also
     // opens the launcher without a TTY (`ANYR_TUI_DUMP=1`).
-    if should_open_launcher(&raw, term::is_interactive(), tui_wants_dump(&parsed, &env)) {
+    #[cfg(feature = "native")]
+    crate::counters::start(if raw.is_empty() { "menu" } else { command });
+    if should_open_launcher(&raw, term::is_interactive(), tui_wants_dump(&parsed, env)) {
         #[cfg(feature = "native")]
-        crate::autoupdate::on_startup("menu", &parsed, &env);
+        crate::autoupdate::on_startup("menu", &parsed, env);
         let empty = ParsedArgs {
             command: "menu".into(),
             flags: parsed.flags.clone(),
             passthrough: Vec::new(),
             raw_from: None,
         };
-        return match run_menu(&empty, &env) {
+        return match run_menu(&empty, env) {
             Ok(code) => code,
             Err(err) => fail(&err),
         };
@@ -112,7 +125,7 @@ pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
     // Update notices and the background update check stay out of agent and
     // scripted runs (`--json`, `--quiet`, no TTY).
     #[cfg(feature = "native")]
-    crate::autoupdate::on_startup(command, &parsed, &env);
+    crate::autoupdate::on_startup(command, &parsed, env);
 
     if raw.is_empty() || command == "help" || command == "--help" || command == "-h" {
         if let Some(bad) = unknown_help_topic(&parsed.passthrough) {
@@ -197,7 +210,7 @@ pub fn run(argv: Vec<String>, env: HashMap<String, String>) -> i32 {
             return usage_fail(&err);
         }
     }
-    match dispatch(canonical, &parsed, &env) {
+    match dispatch(canonical, &parsed, env) {
         Ok(code) => code,
         Err(err) => fail(&err),
     }

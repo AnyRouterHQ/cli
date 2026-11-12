@@ -158,6 +158,8 @@ fn run_agent(
     raw_from: usize,
 ) -> i32 {
     let started = std::time::Instant::now();
+    #[cfg(feature = "native")]
+    crate::counters::spawning(tool_name);
     let code = spawn_child(resolved, args, env_map, unset);
     let forwarded_flags = forwarded.iter().any(|a| a.starts_with("--"));
     if code != 0 && forwarded_flags && started.elapsed() < LAUNCH_FAILURE_WINDOW {

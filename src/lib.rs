@@ -13,6 +13,7 @@ pub mod cmd;
 pub mod commands;
 pub mod completion;
 pub mod config;
+pub mod counters;
 pub mod demo;
 pub mod exit;
 pub mod help;
