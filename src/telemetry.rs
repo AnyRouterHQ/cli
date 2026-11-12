@@ -131,43 +131,59 @@ pub fn otlp_payload(install_id: &str, kind: &Kind, version: &str, os: &str, arch
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    let update_from = match kind {
-        Kind::Update { from } => Some(from.clone()),
-        _ => None,
+    let from = match kind {
+        Kind::Update { from } => from.as_str(),
+        _ => "",
     };
-    json!({
-        "resourceMetrics": [{
-            "resource": {
-                "attributes": [
-                    { "key": "service.name", "value": { "stringValue": "anyr-cli" } },
-                    { "key": "service.version", "value": { "stringValue": version } },
-                    { "key": "os.type", "value": { "stringValue": os } },
-                    { "key": "host.arch", "value": { "stringValue": arch } },
-                    { "key": "cli.install_id", "value": { "stringValue": install_id } },
-                ],
-            },
-            "scopeMetrics": [{
-                "scope": { "name": "anyr.telemetry" },
-                "metrics": [{
-                    "name": kind.event(),
-                    "unit": "1",
-                    "sum": {
-                        "aggregationTemporality": 1,
-                        "isMonotonic": true,
-                        "dataPoints": [{
-                            "attributes": [
-                                { "key": "channel", "value": { "stringValue": if version.contains("beta") { "beta" } else { "stable" } } },
-                                { "key": "from_version", "value": { "stringValue": update_from.as_deref().unwrap_or("") } },
-                            ],
-                            "startTimeUnixNano": now_ns,
-                            "timeUnixNano": now_ns,
-                            "asInt": "1",
-                        }],
-                    },
-                }],
-            }],
-        }],
-    })
+    let channel = if version.contains("beta") {
+        "beta"
+    } else {
+        "stable"
+    };
+    // A parsed template plus a fill costs far less code than the nested
+    // `json!` it replaced; the body is the same value.
+    let mut body: Value = serde_json::from_str(OTLP_TEMPLATE).unwrap_or_default();
+    fill(
+        &mut body,
+        &[
+            ("$version", version.into()),
+            ("$os", os.into()),
+            ("$arch", arch.into()),
+            ("$id", install_id.into()),
+            ("$event", kind.event().into()),
+            ("$channel", channel.into()),
+            ("$from", from.into()),
+            ("$now", now_ns.into()),
+        ],
+    );
+    body
+}
+
+const OTLP_TEMPLATE: &str = r#"{"resourceMetrics":[{"resource":{"attributes":[
+{"key":"service.name","value":{"stringValue":"anyr-cli"}},
+{"key":"service.version","value":{"stringValue":"$version"}},
+{"key":"os.type","value":{"stringValue":"$os"}},
+{"key":"host.arch","value":{"stringValue":"$arch"}},
+{"key":"cli.install_id","value":{"stringValue":"$id"}}]},
+"scopeMetrics":[{"scope":{"name":"anyr.telemetry"},"metrics":[{"name":"$event","unit":"1",
+"sum":{"aggregationTemporality":1,"isMonotonic":true,"dataPoints":[{"attributes":[
+{"key":"channel","value":{"stringValue":"$channel"}},
+{"key":"from_version","value":{"stringValue":"$from"}}],
+"startTimeUnixNano":"$now","timeUnixNano":"$now","asInt":"1"}]}}]}]}]}"#;
+
+/// Replace every string value that is exactly a `$name` in `vars`. Values put
+/// in are not scanned again, so input text can never act as a placeholder.
+fn fill(v: &mut Value, vars: &[(&str, Value)]) {
+    match v {
+        Value::String(s) => {
+            if let Some((_, with)) = vars.iter().find(|(name, _)| name == s) {
+                *v = with.clone();
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|x| fill(x, vars)),
+        Value::Object(map) => map.values_mut().for_each(|x| fill(x, vars)),
+        _ => {}
+    }
 }
 
 /// True when the ping may be sent. `config_flag` is the file's `telemetry:`.
@@ -667,6 +683,75 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    /// The OTLP body as the collector has always received it; a template
+    /// typo would change the wire format silently.
+    #[test]
+    fn otlp_body_keeps_its_wire_shape() {
+        let kind = Kind::Update {
+            from: "0.1.9\"$os".into(),
+        };
+        let mut got = otlp_payload("abc", &kind, "0.1.44-beta.1", "linux", "x86_64");
+        let points = "/resourceMetrics/0/scopeMetrics/0/metrics/0/sum/dataPoints/0";
+        let now = got.pointer(&format!("{points}/timeUnixNano")).cloned();
+        assert!(now.as_ref().and_then(Value::as_u64).unwrap_or(0) > 0);
+        assert_eq!(
+            got.pointer(&format!("{points}/startTimeUnixNano")),
+            now.as_ref()
+        );
+        for field in ["startTimeUnixNano", "timeUnixNano"] {
+            if let Some(v) = got.pointer_mut(&format!("{points}/{field}")) {
+                *v = json!(7);
+            }
+        }
+        let want = json!({
+            "resourceMetrics": [{
+                "resource": {
+                    "attributes": [
+                        { "key": "service.name", "value": { "stringValue": "anyr-cli" } },
+                        { "key": "service.version", "value": { "stringValue": "0.1.44-beta.1" } },
+                        { "key": "os.type", "value": { "stringValue": "linux" } },
+                        { "key": "host.arch", "value": { "stringValue": "x86_64" } },
+                        { "key": "cli.install_id", "value": { "stringValue": "abc" } },
+                    ],
+                },
+                "scopeMetrics": [{
+                    "scope": { "name": "anyr.telemetry" },
+                    "metrics": [{
+                        "name": "cli_update",
+                        "unit": "1",
+                        "sum": {
+                            "aggregationTemporality": 1,
+                            "isMonotonic": true,
+                            "dataPoints": [{
+                                "attributes": [
+                                    { "key": "channel", "value": { "stringValue": "beta" } },
+                                    { "key": "from_version", "value": { "stringValue": "0.1.9\"$os" } },
+                                ],
+                                "startTimeUnixNano": 7,
+                                "timeUnixNano": 7,
+                                "asInt": "1",
+                            }],
+                        },
+                    }],
+                }],
+            }],
+        });
+        assert_eq!(got.to_string(), want.to_string());
+        let daily = otlp_payload("abc", &Kind::Daily, "0.1.44", "macos", "aarch64");
+        assert_eq!(
+            daily.pointer("/resourceMetrics/0/scopeMetrics/0/metrics/0/name"),
+            Some(&json!("cli_daily"))
+        );
+        assert_eq!(
+            daily.pointer(&format!("{points}/attributes/0/value/stringValue")),
+            Some(&json!("stable"))
+        );
+        assert_eq!(
+            daily.pointer(&format!("{points}/attributes/1/value/stringValue")),
+            Some(&json!(""))
+        );
     }
 
     #[test]

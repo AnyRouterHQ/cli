@@ -14,10 +14,10 @@ from pathlib import Path
 
 # Ratchet for the stripped linux x86_64 release binary: the last measured CI
 # size plus 2%. Lower it after each size cut; raise it only on purpose.
-# 3,650,216 bytes at v0.1.44-beta.901 (after phase 4). The size phase packs
-# the help text and shares one sort; 3,592,432 is the CI size this predicts
-# (3,521,992, local deltas applied) plus 2%.
-LINUX_X86_64_BUDGET_BYTES = 3_592_432
+# 3,650,216 bytes at v0.1.44-beta.901 (after phase 4); 3,518,400 at
+# v0.1.44-beta.902 (packed help text, one shared sort). Budget: the CI size
+# the latest cut predicts (local delta applied) plus 2%.
+LINUX_X86_64_BUDGET_BYTES = 3_584_500
 BUDGET_ASSET = "anyr-linux-x86_64"
 # Median wall time each local command must stay under on the budget asset.
 STARTUP_BUDGET_MS = 5.0
