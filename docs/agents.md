@@ -5,6 +5,8 @@ Read this once, then call anyr without a TTY.
 Discover
   anyr commands --json          Every command with its flags, subcommands,
                                 aliases and whether it has JSON output
+  anyr schema [command [sub]]   Typed map (anyr.schema/v2): flag types, args,
+                                auth (none|sk|ak), mutating, exit codes
   anyr <command> --help         The full text for one command
 
 Output

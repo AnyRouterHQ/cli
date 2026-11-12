@@ -52,7 +52,7 @@ pub const VERBS: &[(&str, &str)] = &[
     ),
 ];
 
-const VISIBILITIES: [&str; 3] = ["private", "unlisted", "public"];
+pub(crate) const VISIBILITIES: [&str; 3] = ["private", "unlisted", "public"];
 
 /// The server's name for a visibility. `link` is the old name for `unlisted`
 /// and stays accepted so existing scripts keep working.

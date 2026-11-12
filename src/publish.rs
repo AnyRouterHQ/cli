@@ -45,7 +45,7 @@ pub const APPS_VERBS: &[(&str, &str)] = &[
     ),
 ];
 
-const VISIBILITIES: &[&str] = &["unlisted", "private", "public"];
+pub(crate) const VISIBILITIES: &[&str] = &["unlisted", "private", "public"];
 
 pub fn publish_help() -> String {
     let bin = crate::help::invoked_bin();

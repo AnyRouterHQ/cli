@@ -96,6 +96,17 @@ fn anyr(args: &[&str], base: &str, home: &std::path::Path) -> (i32, String, Stri
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    // Drain both pipes while waiting: a large output (`schema`) would fill
+    // the pipe and block the child forever.
+    let drain = |mut r: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = r.read_to_string(&mut s);
+            s
+        })
+    };
+    let out = drain(Box::new(child.stdout.take().unwrap()));
+    let err = drain(Box::new(child.stderr.take().unwrap()));
     let start = Instant::now();
     loop {
         if child.try_wait().unwrap().is_some() {
@@ -107,11 +118,11 @@ fn anyr(args: &[&str], base: &str, home: &std::path::Path) -> (i32, String, Stri
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let out = child.wait_with_output().unwrap();
+    let status = child.wait().unwrap();
     (
-        out.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
+        status.code().unwrap_or(-1),
+        out.join().unwrap(),
+        err.join().unwrap(),
     )
 }
 

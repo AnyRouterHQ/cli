@@ -319,6 +319,20 @@ fn dispatch(
             }
             Ok(0)
         }
+        "schema" => {
+            // JSON only, so its errors are JSON too.
+            crate::exit::set_json_errors(true);
+            // The whole map is one compact line (about 100 KB); one entry is
+            // pretty, for reading.
+            let entry = crate::registry::schema(&parsed.passthrough)?;
+            let text = if parsed.passthrough.is_empty() {
+                serde_json::to_string(&entry)
+            } else {
+                serde_json::to_string_pretty(&entry)
+            };
+            println!("{}", text.unwrap_or_else(|_| "{}".into()));
+            Ok(0)
+        }
         "pool" if is_pool_subcommand(parsed) => run_pool(parsed, env),
         c if crate::registry::LAUNCHERS.contains(&c) => run_launch(command, parsed, env),
         "chat" => {

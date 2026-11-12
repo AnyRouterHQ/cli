@@ -178,6 +178,19 @@ pub fn complete(words: &[String], env: &BTreeMap<String, String>) -> Vec<String>
                 .map(|v| (v, String::new()))
                 .collect(),
         ),
+        ("schema", []) => prefixed(
+            COMMANDS
+                .iter()
+                .filter(|(n, _)| *n != "schema")
+                .map(|(n, d)| (n.to_string(), d.to_string()))
+                .collect(),
+        ),
+        ("schema", [command]) => prefixed(
+            subcommands(crate::cmd::dispatch::canonical_name(command))
+                .iter()
+                .map(|(n, d)| (n.to_string(), d.to_string()))
+                .collect(),
+        ),
         (_, []) => prefixed(
             subcommands(canonical)
                 .iter()

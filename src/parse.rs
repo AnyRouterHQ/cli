@@ -184,7 +184,7 @@ fn owns(owned: &[&str], arg: &str) -> bool {
 /// `relay --model` (several on-device models): repeats are joined with
 /// commas. Every other value flag keeps last-wins.
 /// `--status` filters lists elsewhere, but on `update` it is a switch.
-fn takes_value(command: &str, name: &str) -> bool {
+pub(crate) fn takes_value(command: &str, name: &str) -> bool {
     VALUE_FLAGS.contains(name) && !(matches!(command, "update" | "upgrade") && name == "status")
 }
 

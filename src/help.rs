@@ -271,6 +271,7 @@ pub fn command_help(command: &str) -> Option<String> {
             "{bin} menu — fullscreen launcher (default on a TTY)\n\nUsage:\n  {bin}                 Same as `{bin} menu` on a TTY\n  {bin} menu [--dump-tui]\n\nAccount, model, credits in a header. Launch agents, configure, quit.\n↑↓ / j k move, ↵ select (signs in and installs if needed), q/esc quit.\nSet ANYR_TUI=0 for inline HUD.\n\n`--dump-tui` / ANYR_TUI_DUMP=1 prints one plain frame and exits.\n",
         ),
         "commands" => commands_help(),
+        "schema" => fill(&bin, SCHEMA),
         "api" => crate::api::help(),
         "publish" => crate::publish::publish_help(),
         "apps" => crate::publish::apps_help(),
@@ -1061,6 +1062,18 @@ Options:
   --key-stdin       test: read the key to check from stdin
   --json            Print JSON (kind: byok | donated | unknown)
   --profile <name>  Use another account
+";
+
+const SCHEMA: &str = "{bin} schema — typed command map for agents (JSON)
+
+Usage:
+  {bin} schema                  Every command and subcommand
+  {bin} schema <command> [sub]  One entry, e.g. {bin} schema keys create
+
+Always JSON on stdout (schema anyr.schema/v2). Each entry has name, summary,
+aliases, subcommands, flags ({name, type: bool|string|int|enum, required,
+enum?, env?}), positional args, auth (none|sk|ak), mutating, json and the
+exit codes it can return. An unknown command exits 3.
 ";
 
 const COMPLETION: &str = "{bin} completion — shell completion
