@@ -593,7 +593,7 @@ mod tests {
             "{err}"
         );
         assert!(err.contains("rate-limited"), "{err}");
-        assert!(err.contains("setup.sh"), "{err}");
+        assert!(err.contains("cli.sh"), "{err}");
     }
 
     #[test]
