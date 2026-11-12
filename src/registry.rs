@@ -49,7 +49,7 @@ pub const ENV: &[(&str, &str)] = &[
     ),
     (
         "ANYROUTER_MANAGEMENT_KEY",
-        "Management key (ak_…) for presets, byok, keys rotate and device removal",
+        "Management key (ak_…) for presets, byok, keys rotate, stats and device removal",
     ),
     ("ANYROUTER_PROFILE", "Use another saved account"),
     ("ANYR_OUTPUT", "json: same as --json on every command"),
@@ -64,7 +64,7 @@ pub fn group(canonical: &str) -> &'static str {
         c if LAUNCHERS.contains(&c) => "launch",
         "relay" => "relay",
         "artifact" | "publish" | "apps" => "publish",
-        "usage" | "credits" | "keys" | "byok" | "presets" | "logs" | "generation"
+        "usage" | "credits" | "stats" | "keys" | "byok" | "presets" | "logs" | "generation"
         | "transactions" | "mcp" | "api" => "account",
         _ => "setup",
     }
@@ -95,6 +95,7 @@ pub fn subcommands(canonical: &str) -> &'static [&'static str] {
         "mcp" => &["url", "add", "connections"],
         "logs" => &["sessions"],
         "credits" => &["balance", "history"],
+        "stats" => crate::cmd::stats::SUBCOMMANDS,
         "config" => &["get", "path", "use"],
         "relay" => &[
             "start", "stop", "status", "logs", "models", "devices", "pool", "pair", "rename",
@@ -327,6 +328,9 @@ pub const SPECS: &[Spec] = &[
     edit("mcp add", &["<agent>"]),
     read("transactions", Sk, &[]),
     read("credits", Sk, &["[balance|history]"]),
+    read("stats", Ak, &["[report]"]),
+    read("stats models", Auth::None, &[]),
+    read("stats burn", Auth::None, &[]),
     read("chat", Sk, &["[prompt|-]"]),
     read("embed", Sk, &["[text…]"]),
     read("eval", Sk, &["[prompt]"]),
@@ -409,6 +413,7 @@ const LAUNCH: Spec = Spec {
 /// Value flags whose value is a whole number.
 const INT_FLAGS: &[&str] = &[
     "limit",
+    "days",
     "timeout",
     "lines",
     "max-concurrency",
@@ -424,6 +429,7 @@ fn flag_enum(command: &str, flag: &str) -> Option<&'static [&'static str]> {
         ("upgrade", "channel") => Some(&["stable", "beta"]),
         ("publish", "visibility") => Some(crate::publish::VISIBILITIES),
         ("artifact", "visibility") => Some(&crate::artifact::VISIBILITIES),
+        ("stats", "range") => Some(&["3m", "12m", "all"]),
         _ => None,
     }
 }
@@ -675,6 +681,7 @@ mod tests {
             "logs",
             "transactions",
             "credits",
+            "stats",
             "embed",
             "generation",
             "presets",

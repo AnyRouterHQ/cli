@@ -312,6 +312,7 @@ fn is_page(topic: &str) -> bool {
             | "upgrade"
             | "transactions"
             | "credits"
+            | "stats"
             | "embed"
             | "eval"
             | "schema"

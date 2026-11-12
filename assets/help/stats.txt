@@ -1,0 +1,28 @@
+{bin} stats — usage analytics
+
+Usage:
+  {bin} stats [summary] [--period 7d|30d|90d|180d|365d]
+  {bin} stats usage [--from YYYY-MM-DD] [--to YYYY-MM-DD]
+  {bin} stats keys [--days N]
+  {bin} stats models [--period this_week|this_month|this_quarter|this_year] [--limit N]
+  {bin} stats burn [--range 3m|12m|all]
+
+Reports:
+  summary   Your requests, tokens, cost, latency and cache hits (default 30d)
+  usage     Your spend and tokens per day (default the last 30 days, up to 90)
+  keys      Requests, tokens and spend per API key (default 7 days, up to 90)
+  models    Top models across the whole platform, not only yours
+  burn      Tokens per day across the whole platform, not only yours
+
+summary, usage and keys read your workspace and need a management key with
+read:analytics: ANYROUTER_MANAGEMENT_KEY=ak_… or the account's
+management_key. models and burn are public and need no key.
+
+Output: a table on a terminal, tab-separated when piped. --json prints the
+API's JSON unchanged, so its shape is the API's own and may gain fields.
+A flag that a report does not read, or a value outside its choices, exits 2.
+
+Examples:
+  {bin} stats
+  {bin} stats usage --from 2026-11-01 --json | jq '.totals'
+  {bin} stats models --period this_month --limit 20

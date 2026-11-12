@@ -41,6 +41,13 @@ pub fn subcommands(command: &str) -> &'static [(&'static str, &'static str)] {
             ("balance", "Credits remaining (same as usage)"),
             ("history", "Credit ledger (same as transactions)"),
         ],
+        "stats" => &[
+            ("summary", "Your requests, tokens, cost and latency"),
+            ("usage", "Your spend and tokens per day"),
+            ("keys", "Requests and spend per API key"),
+            ("models", "Top models across the platform (public)"),
+            ("burn", "Tokens per day across the platform (public)"),
+        ],
         "config" => &[
             ("get", "Print current settings"),
             ("path", "Print the config file path"),

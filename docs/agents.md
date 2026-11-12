@@ -40,8 +40,8 @@ Exit codes
 
 Auth
   ANYROUTER_API_KEY=sk-ar-v1-…  Inference key; no login needed
-  ANYROUTER_MANAGEMENT_KEY=ak_… Needed for presets, byok, device removal
-                                and keys rotate
+  ANYROUTER_MANAGEMENT_KEY=ak_… Needed for presets, byok, device removal,
+                                keys rotate and stats summary|usage|keys
   anyr whoami --json            Check which account a key belongs to
 
 Ask a model
@@ -66,6 +66,9 @@ Safe to rerun
 Account
   anyr credits --json           Credits (same as anyr usage --json)
   anyr credits history --json   Credit ledger (same as anyr transactions)
+  anyr stats [report] --json    Analytics; the API's JSON unchanged. Reports:
+                                summary usage keys (yours, need ak_), models
+                                burn (platform-wide, no key)
   anyr logs --json              Recent requests
   anyr keys list --json         API keys
   anyr api <resource> [verb]    Any dashboard resource; anyr api METHOD /path

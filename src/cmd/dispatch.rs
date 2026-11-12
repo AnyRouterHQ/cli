@@ -286,8 +286,10 @@ pub(crate) fn cmd_kind(command: &str) -> Option<CmdKind> {
         | "pool" | "pi" | "qwen" | "goose" | "aider" | "crush" | "kilo" | "fx" | "upgrade"
         | "onboard" | "impl" | "plan" | "fix" | "deploy" | "cp" | "relay" | "decision"
         | "commands" | "api" | "completion" | "byok" | "publish" | "apps" | "artifact" | "chat"
-        | "logs" | "transactions" | "credits" | "embed" | "generation" | "presets" | "mcp"
-        | "eval" | "task" | "delegate" | "schema" | "telemetry" | "report" => CmdKind::Implemented,
+        | "logs" | "transactions" | "credits" | "stats" | "embed" | "generation" | "presets"
+        | "mcp" | "eval" | "task" | "delegate" | "schema" | "telemetry" | "report" => {
+            CmdKind::Implemented
+        }
         "cursor" | "cline" | "windsurf" => CmdKind::HelpOnly,
         "audit" | "skills" | "prompt" => CmdKind::Stub,
         _ => return None,
@@ -338,6 +340,7 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
     ("model", "Alias of models"),
     ("usage", "Credits remaining"),
     ("credits", "Credit balance and history"),
+    ("stats", "Usage analytics; --json is the API's own JSON"),
     ("logs", "Recent requests, failures and sessions"),
     ("generation", "Cost, provider and timing of one call"),
     ("gen", "Alias of generation"),
@@ -501,6 +504,10 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
         ],
         "logs" => &[
             "profile", "base-url", "config", "json", "key", "limit", "model", "status",
+        ],
+        "stats" => &[
+            "profile", "base-url", "config", "json", "key", "period", "from", "to", "days",
+            "limit", "range",
         ],
         "generation" => &["profile", "base-url", "config", "json", "key"],
         "mcp" => &[

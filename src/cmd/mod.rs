@@ -29,6 +29,7 @@ pub(crate) mod presets;
 #[cfg(feature = "native")]
 pub(crate) mod report;
 pub(crate) mod settings;
+pub(crate) mod stats;
 pub(crate) mod status;
 #[cfg(feature = "native")]
 pub(crate) mod task;

@@ -138,7 +138,7 @@ for one command.
 | Launch | `claude`, `codex`, `grok`, `opencode`, `pi`, `pool`, and more ([Launchers](#launchers)) |
 | Relay | `relay` |
 | Publish | `publish`, `apps`, `artifact` |
-| Account | `api`, `credits`, `usage`, `logs`, `generation`, `presets`, `mcp`, `transactions`, `keys`, `byok` |
+| Account | `api`, `credits`, `stats`, `usage`, `logs`, `generation`, `presets`, `mcp`, `transactions`, `keys`, `byok` |
 | Setup and help | `config`, `menu`, `onboard`, `upgrade`, `completion`, `commands`, `help` |
 
 ### For agents and scripts
@@ -349,6 +349,21 @@ anyr credits history --type purchase # ledger (same as anyr transactions)
 
 Buying credits from the CLI is not available yet: the purchase API takes a
 signed-in browser session only. Top up at <https://anyrouter.dev/dashboard/credits>.
+
+### Usage analytics: `anyr stats`
+
+```bash
+anyr stats                           # your requests, tokens, cost, latency (30d)
+anyr stats usage --from 2026-11-01   # your spend and tokens per day
+anyr stats keys --days 30            # per API key
+anyr stats models --period this_month  # top models across the platform
+anyr stats burn --range 12m          # platform tokens per day
+```
+
+`summary`, `usage` and `keys` read your workspace with a management key
+(`read:analytics`, `ANYROUTER_MANAGEMENT_KEY`); `models` and `burn` are public
+platform data. A table on a terminal, TSV when piped; `--json` prints the
+API's JSON unchanged.
 
 ### Credit ledger: `anyr transactions`
 
