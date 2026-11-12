@@ -1115,7 +1115,10 @@ pub fn delete_key(base_url: &str, credential: &str, hash: &str) -> Result<(), St
     let url = join_api(base_url, &format!("/v1/keys/{hash}"));
     let (status, _body) = http_delete(&url, Some(credential))?;
     if !(200..300).contains(&status) {
-        return Err(format!("Could not revoke key (HTTP {status})."));
+        return Err(crate::exit::tag(
+            crate::exit::for_status(status),
+            format!("Could not revoke key (HTTP {status})."),
+        ));
     }
     Ok(())
 }

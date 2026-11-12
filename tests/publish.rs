@@ -563,3 +563,16 @@ fn apps_rm_if_exists_treats_404_as_done_and_deletes_once_otherwise() {
     assert!(rx.recv().unwrap().starts_with("DELETE "));
     assert!(rx.try_recv().is_err(), "one DELETE only");
 }
+
+#[test]
+fn apps_rm_if_exists_keeps_server_errors_and_404_without_it_is_exit_3() {
+    let (base, _rx) = serve(vec![(500, r#"{"error":{"message":"boom"}}"#)]);
+    let (code, _, err) = run(cli(
+        &base,
+        &["apps", "rm", "demo", "k1", "--yes", "--if-exists"],
+    ));
+    assert_eq!(code, 1, "{err}");
+    let (base, _rx) = serve(vec![(404, r#"{"error":{"message":"gone"}}"#)]);
+    let (code, _, err) = run(cli(&base, &["apps", "rm", "demo", "k1", "--yes"]));
+    assert_eq!(code, 3, "{err}");
+}

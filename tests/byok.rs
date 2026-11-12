@@ -408,3 +408,18 @@ fn rm_if_exists_of_a_missing_key_is_success() {
         assert_eq!(v["deleted"], false, "{reply:?}");
     }
 }
+
+#[test]
+fn rm_if_exists_keeps_other_failures() {
+    // WHY: only "already gone" may become success; auth and server errors
+    // must still fail.
+    for (status, want) in [(500, 1), (401, 4)] {
+        let (base, _rx) = serve(vec![(status, r#"{"error":{"message":"x"}}"#.to_string())]);
+        let (code, _, err) = run(
+            anyr(&base),
+            &["byok", "rm", "openai", "--yes", "--if-exists"],
+            None,
+        );
+        assert_eq!(code, want, "{status}: {err}");
+    }
+}

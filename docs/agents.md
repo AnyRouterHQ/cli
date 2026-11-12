@@ -52,6 +52,16 @@ Ask a model
   anyr embed "text" --json      Embeddings
   anyr decision --model <id> --state … --questions '{…}' --json
 
+Safe to rerun
+  anyr keys create --name ci --if-missing --json
+                                The newest active key named ci if one exists
+                                ({"created":false,…}, never its secret), else a
+                                new one ({"created":true,"key":…})
+  --if-exists on keys revoke, byok rm, presets rm, artifact rm, apps rm
+                                A target that is already gone (404) exits 0
+                                with {"deleted":false}; other errors keep
+                                their exit codes
+
 Account
   anyr usage --json             Credits
   anyr logs --json              Recent requests

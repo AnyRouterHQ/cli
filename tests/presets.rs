@@ -361,3 +361,14 @@ fn rm_if_exists_of_a_missing_preset_is_success_and_without_it_exit_3() {
     let (code, _, err) = managed(&base, &["presets", "rm", "gone", "--yes"], "rmgone3");
     assert_eq!(code, 3, "{err}");
 }
+
+#[test]
+fn rm_if_exists_keeps_a_server_error() {
+    let (base, _rx) = serve(vec![(500, r#"{"error":{"message":"boom"}}"#.into())]);
+    let (code, _, err) = managed(
+        &base,
+        &["presets", "rm", "x", "--yes", "--if-exists"],
+        "rm500",
+    );
+    assert_eq!(code, 1, "{err}");
+}

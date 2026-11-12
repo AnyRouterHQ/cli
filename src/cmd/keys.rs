@@ -116,7 +116,8 @@ fn resolve_key(
     }
 }
 
-/// The newest active key named exactly `name`, for `keys create --if-missing`.
+/// The newest active (not disabled) key named exactly `name`, for
+/// `keys create --if-missing`.
 fn active_key_named(rows: &[crate::http::RemoteKey], name: &str) -> Option<crate::http::RemoteKey> {
     crate::http::keys_newest_first(rows.to_vec())
         .into_iter()
@@ -139,7 +140,8 @@ fn print_existing_key(parsed: &ParsedArgs, row: &crate::http::RemoteKey) {
             serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into())
         );
     } else {
-        println!(
+        // stderr: `KEY=$(… --quiet)` must never capture a sentence as a key.
+        eprintln!(
             "Key \"{}\" already exists ({}); nothing created.",
             row.name,
             short_ref(row)
@@ -267,6 +269,13 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
         }
         "create" => {
             let agent = agent_flag(parsed)?;
+            // An existing key's secret cannot be fetched, so it could not be
+            // saved for the agent.
+            if agent.is_some() && parsed.flag_true("if-missing") {
+                return Err(hint(
+                    "--if-missing cannot save an existing key for --agent; its secret is shown only once. Use: {bin} keys create --agent <agent>",
+                ));
+            }
             let (path, mut cfg, base, cred, account) = match &agent {
                 Some(agent) => agent_mint_credential(parsed, env, agent)?,
                 None => {
@@ -276,6 +285,7 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             };
             let name = get_string_flag(&parsed.flags, "name")
                 .or_else(|| parsed.passthrough.get(1).cloned())
+                .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| default_key_name(agent.as_deref()));
             if parsed.flag_true("if-missing") {
@@ -517,7 +527,13 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                     return Ok(1);
                 }
             }
-            delete_key(&base, &cred, &row.hash)?;
+            if let Err(e) = delete_key(&base, &cred, &row.hash) {
+                // Revoked by someone else since the list: already gone.
+                if crate::api::absent_ok(parsed, &e, "key", &hash) {
+                    return Ok(0);
+                }
+                return Err(e);
+            }
             println!(
                 "{}  revoked \"{}\" ({})",
                 term::ok("Revoked"),

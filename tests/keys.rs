@@ -273,3 +273,52 @@ fn revoke_if_exists_on_a_missing_key_is_success_and_sends_no_delete() {
     let (code, _, err) = run(&base, &["keys", "revoke", "zzz", "--yes"], None);
     assert_eq!(code, 3, "{err}");
 }
+
+#[test]
+fn create_if_missing_quiet_never_prints_a_sentence_as_the_key() {
+    // WHY: `KEY=$(anyr keys create … --quiet)` must not capture prose.
+    let (base, _rx) = serve(vec![(200, LIST.into())]);
+    let (code, out, err) = run(
+        &base,
+        &[
+            "keys",
+            "create",
+            "--name",
+            "ci-bot",
+            "--if-missing",
+            "--quiet",
+        ],
+        None,
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.trim().is_empty(), "{out}");
+    assert!(err.contains("already exists"), "{err}");
+}
+
+#[test]
+fn create_if_missing_refuses_agent_and_revoke_if_exists_keeps_server_errors() {
+    let (code, _, err) = run(
+        "http://127.0.0.1:9/api",
+        &["keys", "create", "--agent", "claude", "--if-missing"],
+        None,
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--if-missing cannot save"), "{err}");
+    // A failed DELETE that is not a 404 stays a failure.
+    let (base, _rx) = serve(vec![(200, LIST.into()), (500, "{}".into())]);
+    let (code, _, err) = run(
+        &base,
+        &["keys", "revoke", "abc123", "--yes", "--if-exists"],
+        None,
+    );
+    assert_eq!(code, 1, "{err}");
+    // A 404 on the DELETE itself (revoked since the list) is already gone.
+    let (base, _rx) = serve(vec![(200, LIST.into()), (404, "{}".into())]);
+    let (code, out, err) = run(
+        &base,
+        &["keys", "revoke", "abc123", "--yes", "--if-exists", "--json"],
+        None,
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"deleted\":false"), "{out}");
+}
