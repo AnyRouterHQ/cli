@@ -35,6 +35,7 @@ const SKIP: &[&str] = &[
     "login",
     "auth login",
     "account add",
+    "auth add",
     "relay start",
     "relay pair",
     "relay logs",

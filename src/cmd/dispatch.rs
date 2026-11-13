@@ -660,6 +660,7 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
             "json",
             "masked",
             "verbose",
+            "local",
         ],
         "prompt" => &["base-url", "json"],
         "menu" => &["dump-tui", "config", "profile", "key", "base-url"],

@@ -371,9 +371,13 @@ pub(crate) fn run_whoami(
         Err(err) => return Err(err),
     };
     if json {
+        let mut v = view.json();
+        if let Some(cfg) = load_config_if_present(&path) {
+            v["profiles"] = crate::cmd::auth::profiles_json(&cfg, env);
+        }
         println!(
             "{}",
-            serde_json::to_string_pretty(&view.json()).unwrap_or_else(|_| "{}".into())
+            serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into())
         );
         return Ok(0);
     }

@@ -85,7 +85,9 @@ pub const GROUPS: &[(&str, &str)] = &[
 
 pub fn subcommands(canonical: &str) -> &'static [&'static str] {
     match canonical {
-        "auth" => &["login", "logout", "status", "switch", "token"],
+        "auth" => &[
+            "login", "logout", "status", "switch", "token", "list", "add", "rename", "remove",
+        ],
         "account" => &["list", "use", "add", "rename", "remove"],
         "agents" => &["list", "get", "set", "unset", "install"],
         "models" => &["list", "show", "use"],
@@ -376,6 +378,10 @@ pub const SPECS: &[Spec] = &[
     edit("auth logout", &[]),
     read("auth status", Sk, &[]),
     edit("auth switch", &["[name]"]),
+    local("auth list", &[]),
+    write("auth add", Auth::None, &["[name]"]),
+    edit("auth rename", &["<old>", "<new>"]),
+    edit("auth remove", &["<name>"]),
     local("config", &[]),
     edit("config use", &["<name>"]),
     local("menu", &[]),

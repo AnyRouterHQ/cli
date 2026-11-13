@@ -28,7 +28,10 @@ pub(crate) fn run_auth(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
     match sub {
         "login" | "setup" => run_login(&rest, env),
         "logout" => run_logout(&rest, env),
+        "status" if rest.flag_true("local") => run_auth_status_local(&rest, env),
         "status" => run_whoami(&rest, env),
+        // The account verbs, on the one account noun: the same code.
+        "list" | "add" | "rename" | "remove" => crate::cmd::account::run_account(parsed, env),
         "token" => run_auth_token(&rest, env),
         "switch" => run_auth_switch(&rest, env),
         other => Err(format!(
@@ -38,6 +41,75 @@ pub(crate) fn run_auth(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             command_help("auth").unwrap_or_default()
         )),
     }
+}
+
+/// One row per saved account, from config.yaml only: never the key itself.
+/// `key_source` is `env` for the active account when `ANYROUTER_API_KEY`
+/// overrides it, `config` when the file holds a key, else `none`.
+pub(crate) fn profiles_json(
+    cfg: &crate::config::Config,
+    env: &BTreeMap<String, String>,
+) -> serde_json::Value {
+    let env_key = env
+        .get("ANYROUTER_API_KEY")
+        .is_some_and(|k| !k.trim().is_empty());
+    let has = |k: &Option<String>| k.as_deref().is_some_and(|k| !k.trim().is_empty());
+    serde_json::Value::Array(
+        cfg.profiles
+            .iter()
+            .map(|(name, p)| {
+                let active = *name == cfg.active_profile;
+                let source = if active && env_key {
+                    "env"
+                } else if has(&p.api_key) {
+                    "config"
+                } else {
+                    "none"
+                };
+                serde_json::json!({
+                    "name": name,
+                    "active": active,
+                    "key_masked": mask_api_key(p.api_key.as_deref()),
+                    "key_source": source,
+                    "has_management_key": has(&p.management_key),
+                    "default_model": p.default_model(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// `auth status --local`: every saved account, no network. Exit 0 unless the
+/// config file exists and cannot be read.
+fn run_auth_status_local(
+    parsed: &ParsedArgs,
+    env: &BTreeMap<String, String>,
+) -> Result<i32, String> {
+    let path = config_path(parsed, env);
+    let cfg = if path.exists() {
+        crate::config::read_config(&path)?
+    } else {
+        crate::config::Config::default()
+    };
+    let profiles = profiles_json(&cfg, env);
+    if parsed.flag_true("json") {
+        crate::cmd::view::print_json(&serde_json::json!({
+            "active": cfg.active_profile,
+            "profiles": profiles,
+        }));
+        return Ok(0);
+    }
+    for r in profiles.as_array().into_iter().flatten() {
+        println!(
+            "{} {}  {}  {}  {}",
+            if r["active"] == true { "*" } else { " " },
+            r["name"].as_str().unwrap_or_default(),
+            r["key_masked"].as_str().unwrap_or_default(),
+            r["key_source"].as_str().unwrap_or_default(),
+            r["default_model"].as_str().unwrap_or_default(),
+        );
+    }
+    Ok(0)
 }
 
 pub(crate) fn run_auth_token(

@@ -9,6 +9,12 @@ Commands:
   status:      View authentication status
   switch:      Switch the active account
   token:       Print the API key
+  list:        List saved accounts (same as account list)
+  add:         Sign in to another account
+  rename:      Rename an account
+  remove:      Remove an account
+
+  status --local [--json]   Every saved account from config.yaml, no network
 
 Options:
   -h, --help   Show help for command
