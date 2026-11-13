@@ -24,7 +24,12 @@ const MODEL: &str = "z-ai/glm-4.7";
 
 fn anyr(home: &Path, args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_anyr"));
-    cmd.env_clear()
+    cmd // Not env_clear: Windows needs SystemRoot to open a socket.
+        .env_remove("ANYROUTER_API_KEY")
+        .env_remove("ANYROUTER_PROFILE")
+        .env_remove("ANYROUTER_MANAGEMENT_KEY")
+        .env_remove("ANYR_OUTPUT")
+        .env_remove("ANYR_AGENTS")
         .env("HOME", home)
         .env("ANYROUTER_HOME", home)
         // No agents and no `sh`: an installer started by mistake fails.
