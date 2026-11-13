@@ -286,6 +286,29 @@ jobs:
         shell: bash
         run: bash scripts/smoke.sh "${{ matrix.asset }}" ${{ runner.os != 'Windows' && '--mock' || '' }}
 
+      # Local-binary mode, like setup.sh with ANYR_SETUP_BIN. -File is how
+      # Windows PowerShell reports a failed install as a non-zero exit.
+      - name: install.ps1 installs the packaged exe
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ps = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'install.ps1')
+          $env:ANYR_BIN_DIR = Join-Path $env:RUNNER_TEMP 'anyr-bin'
+          $env:ANYR_SETUP_BIN = 'missing.exe'
+          $p = Start-Process powershell -ArgumentList $ps -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -eq 0) { throw 'install.ps1 must fail when ANYR_SETUP_BIN is missing' }
+          $env:ANYR_SETUP_BIN = (Resolve-Path '${{ matrix.asset }}').Path
+          # Twice: the second run replaces an anyr.exe that has already run.
+          foreach ($run in 1, 2) {
+            $p = Start-Process powershell -ArgumentList $ps -Wait -PassThru -NoNewWindow
+            if ($p.ExitCode -ne 0) { throw "install.ps1 exited $($p.ExitCode) on run $run" }
+            $got = & "$env:ANYR_BIN_DIR\anyr.exe" --version
+            if ($LASTEXITCODE -ne 0) { throw "anyr.exe --version failed on run $run" }
+            "run ${run}: $got"
+          }
+          $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (($user -split ';') -notcontains $env:ANYR_BIN_DIR) { throw 'install dir is not on the user PATH' }
+
       - name: run the musl build in Alpine
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
@@ -533,7 +556,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -546,12 +569,14 @@ jobs:
       # assets, and an install that read "newest beta" too early got the
       # previous one. Wait for this run's own tag, then install it by name.
       - name: wait until this run's release is downloadable
+        shell: bash
         run: |
           set -euo pipefail
           WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
           case "$RUNNER_OS" in
             Linux) FILES="anyr-linux-x86_64 anyr-linux-x86_64-musl checksums.txt" ;;
             macOS) FILES="anyr-darwin-arm64 checksums.txt" ;;
+            Windows) FILES="anyr-windows-x86_64.exe checksums.txt" ;;
           esac
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${WANT}"
           served() {
@@ -568,6 +593,7 @@ jobs:
           exit 1
 
       - name: install the beta with setup.sh and check the version
+        if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
@@ -581,6 +607,21 @@ jobs:
             echo "run ${run}: want ${WANT}, got ${GOT}"
             case "$GOT" in "${WANT}"*) ;; *) echo "installed version is not the one just published"; exit 1;; esac
           done
+
+      - name: install the beta with install.ps1 and check the version
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $want = python scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print
+          $env:ANYR_BIN_DIR = Join-Path $env:RUNNER_TEMP 'bin'
+          $ps = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'install.ps1', '-Version', $want)
+          foreach ($run in 1, 2) {
+            $p = Start-Process powershell -ArgumentList $ps -Wait -PassThru -NoNewWindow
+            if ($p.ExitCode -ne 0) { throw "install.ps1 exited $($p.ExitCode) on run $run" }
+            $got = & "$env:ANYR_BIN_DIR\anyr.exe" --version
+            "run ${run}: want $want, got $got"
+            if (-not "$got".StartsWith($want)) { throw 'installed version is not the one just published' }
+          }
 
       - name: install the beta on Alpine and check it picked the musl build
         if: runner.os == 'Linux'
@@ -601,6 +642,7 @@ jobs:
       # minutes (it once still showed the previous beta), so retry until it
       # lists this run's tag.
       - name: anyr update --check finds the same release
+        if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           export HOME="$RUNNER_TEMP/home" ANYR_NO_UPDATE=

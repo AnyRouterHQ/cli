@@ -41,6 +41,18 @@ installer picks the static `anyr-<os>-<arch>-musl` build, and `anyr update`
 keeps a musl install on musl. `ANYR_LIBC=musl` or `ANYR_LIBC=gnu` overrides the
 choice.
 
+On Windows, in PowerShell 5.1 or later (no admin rights needed):
+
+```powershell
+irm https://raw.githubusercontent.com/AnyRouterHQ/cli/main/install.ps1 | iex
+```
+
+It installs `anyr.exe` into `%LOCALAPPDATA%\Programs\anyr` (`ANYR_BIN_DIR`
+overrides), checks it against the release's `checksums.txt` and adds that
+directory to your user `PATH`. `ANYR_CHANNEL=beta` or `ANYR_VERSION=<x.y.z>`
+pick another build. Windows on arm64 gets the x64 build, which runs under
+emulation.
+
 The same script is served from this repo, and `--channel beta` installs the
 prerelease that every push to `main` publishes:
 
