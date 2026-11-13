@@ -12,6 +12,7 @@ fn main() {
 fn pack_help() {
     println!("cargo:rerun-if-changed=assets/help");
     println!("cargo:rerun-if-changed=docs/agents.md");
+    println!("cargo:rerun-if-changed=assets/schema/outputs.json");
     let mut pages: Vec<(String, String)> = std::fs::read_dir("assets/help")
         .expect("assets/help")
         .map(|entry| {
@@ -31,6 +32,11 @@ fn pack_help() {
     pages.push((
         "agents".into(),
         std::fs::read_to_string("docs/agents.md").expect("docs/agents.md"),
+    ));
+    // `anyr schema` output schemas, deflated with the pages.
+    pages.push((
+        "outputs".into(),
+        std::fs::read_to_string("assets/schema/outputs.json").expect("outputs.json"),
     ));
     let mut raw = Vec::new();
     for (name, text) in &pages {

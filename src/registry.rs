@@ -533,8 +533,63 @@ fn auth_name(a: Auth) -> &'static str {
     }
 }
 
+/// Mutating paths that are safe to repeat: the same call leaves the same
+/// state. Every read is idempotent.
+const IDEMPOTENT: &[&str] = &[
+    "logout",
+    "models use",
+    "keys set",
+    "keys unset",
+    "keys update",
+    "mcp add",
+    "artifact visibility",
+    "apps visibility",
+    "account use",
+    "auth logout",
+    "auth switch",
+    "config use",
+    "agents set",
+    "agents unset",
+    "agents install",
+    "telemetry on",
+    "telemetry off",
+    "relay stop",
+    "relay pool",
+];
+
+/// `{ "$defs", "commands": {path: schema}, "passthrough": [path] }` from
+/// `assets/schema/outputs.json`: the `--json` stdout shape of each path
+/// whose JSON anyr builds itself.
+fn outputs() -> Value {
+    serde_json::from_str(&crate::help::doc("outputs")).unwrap_or_default()
+}
+
+/// `schema` with the shared `$defs` it reaches, so one entry validates on
+/// its own (refs resolve against the entry's root).
+fn with_defs(schema: &Value, defs: &Value) -> Value {
+    let mut used = serde_json::Map::new();
+    let mut text = schema.to_string();
+    loop {
+        let before = used.len();
+        for (name, def) in defs.as_object().into_iter().flatten() {
+            if !used.contains_key(name) && text.contains(&format!("#/$defs/{name}\"")) {
+                text.push_str(&def.to_string());
+                used.insert(name.clone(), def.clone());
+            }
+        }
+        if used.len() == before {
+            break;
+        }
+    }
+    let mut out = schema.clone();
+    if !used.is_empty() {
+        out["$defs"] = Value::Object(used);
+    }
+    out
+}
+
 /// One `anyr schema` entry: a command (`keys`) or a subcommand (`keys create`).
-fn schema_entry(command: &'static str, sub: Option<&'static str>) -> Value {
+fn schema_entry(command: &'static str, sub: Option<&'static str>, out: &Value) -> Value {
     let path = match sub {
         Some(sub) => format!("{command} {sub}"),
         None => command.to_string(),
@@ -548,7 +603,7 @@ fn schema_entry(command: &'static str, sub: Option<&'static str>) -> Value {
             .map(|(_, d)| *d)
             .unwrap_or(""),
     };
-    json!({
+    let mut e = json!({
         "name": path,
         "summary": summary,
         "aliases": if sub.is_none() { aliases(command) } else { Vec::new() },
@@ -557,17 +612,28 @@ fn schema_entry(command: &'static str, sub: Option<&'static str>) -> Value {
         "args": s.args,
         "auth": auth_name(s.auth),
         "mutating": s.mutating,
+        "idempotent": !s.mutating || IDEMPOTENT.contains(&path.as_str()),
         "json": has_json_output(command),
         "exits": exits(&s),
-    })
+    });
+    if let Some(schema) = out["commands"].get(&path) {
+        e["output"] = with_defs(schema, &out["$defs"]);
+    } else if out["passthrough"]
+        .as_array()
+        .is_some_and(|a| a.iter().any(|p| *p == path.as_str()))
+    {
+        e["output_passthrough"] = json!(true);
+    }
+    e
 }
 
 fn schema_entries() -> Vec<Value> {
+    let outputs = outputs();
     let mut out = Vec::new();
     for name in canonical_names() {
-        out.push(schema_entry(name, None));
+        out.push(schema_entry(name, None, &outputs));
         for sub in subcommands(name) {
-            out.push(schema_entry(name, Some(sub)));
+            out.push(schema_entry(name, Some(sub), &outputs));
         }
     }
     out
@@ -619,7 +685,7 @@ pub fn schema(path: &[String]) -> Result<Value, String> {
         ),
         _ => return Err(unknown()),
     };
-    let mut entry = schema_entry(command, sub);
+    let mut entry = schema_entry(command, sub, &outputs());
     entry["schema"] = json!(SCHEMA_V2);
     Ok(entry)
 }
@@ -850,6 +916,42 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn every_output_schema_names_a_real_path_and_resolves_its_refs() {
+        // A schema keyed by a stale path would never be served; a dangling
+        // ref would fail every check that uses it.
+        let out = outputs();
+        let paths: Vec<String> = all_paths().into_iter().map(|(p, _)| p).collect();
+        let commands = out["commands"].as_object().expect("outputs.json commands");
+        assert!(commands.len() >= 15, "{}", commands.len());
+        for path in commands.keys() {
+            assert!(paths.contains(path), "stale output schema {path}");
+        }
+        for r in out.to_string().split("\"#/$defs/").skip(1) {
+            let name = r.split('"').next().unwrap_or_default();
+            assert!(out["$defs"].get(name).is_some(), "dangling ref {name}");
+        }
+        for p in out["passthrough"].as_array().unwrap() {
+            let p = p.as_str().unwrap();
+            assert!(paths.iter().any(|x| x == p), "stale passthrough {p}");
+            assert!(!commands.contains_key(p), "{p} is both");
+        }
+        let e = schema(&["agents".into(), "set".into()]).unwrap();
+        assert_eq!(
+            (e["mutating"].clone(), e["idempotent"].clone()),
+            (json!(true), json!(true))
+        );
+        assert!(e["output"]["$defs"]["agent"].is_object(), "{e}");
+        assert_eq!(
+            schema(&["keys".into(), "create".into()]).unwrap()["idempotent"],
+            false
+        );
+        assert_eq!(
+            schema(&["stats".into()]).unwrap()["output_passthrough"],
+            true
+        );
     }
 
     #[test]

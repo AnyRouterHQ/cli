@@ -1,0 +1,41 @@
+{
+"$defs": {
+"ns": {"type": ["string", "null"]},
+"strs": {"type": "array", "items": {"type": "string"}},
+"agent": {"type": "object", "required": ["id", "name", "installed", "path", "version", "profile", "model", "key_source", "args", "last"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "installed": {"type": "boolean"}, "path": {"$ref": "#/$defs/ns"}, "version": {"type": ["integer", "null"]}, "profile": {"$ref": "#/$defs/ns"}, "model": {"$ref": "#/$defs/ns"}, "key_source": {"enum": ["agent", "profile", "env", "none"]}, "args": {"$ref": "#/$defs/strs"}, "last": {"type": "boolean"}}},
+"profile": {"type": "object", "required": ["name", "active", "key_masked", "key_source", "has_management_key", "default_model"], "properties": {"name": {"type": "string"}, "active": {"type": "boolean"}, "key_masked": {"type": "string"}, "key_source": {"enum": ["config", "env", "none"]}, "has_management_key": {"type": "boolean"}, "default_model": {"type": "string"}}},
+"profiles": {"type": "array", "items": {"$ref": "#/$defs/profile"}},
+"whoami": {"type": "object", "required": ["signed_in", "account", "user", "credits", "plan", "key_masked", "key", "default_model", "default_agent", "agents", "config_path", "base_url"], "properties": {"signed_in": {"const": true}, "account": {"type": "string"}, "user": {"type": "object", "required": ["name", "email", "username"]}, "credits": {"type": ["number", "null"]}, "plan": {"$ref": "#/$defs/ns"}, "key_masked": {"type": "string"}, "key": {"type": ["object", "null"]}, "default_model": {"type": "string"}, "default_agent": {"$ref": "#/$defs/ns"}, "agents": {"type": "array", "items": {"type": "object", "required": ["agent", "key_masked", "source", "account"]}}, "config_path": {"type": "string"}, "base_url": {"type": "string"}, "profiles": {"$ref": "#/$defs/profiles"}}},
+"key": {"type": "object", "required": ["name", "hash", "masked", "created_at", "last_used_at", "active", "current"], "properties": {"name": {"type": "string"}, "hash": {"type": "string"}, "masked": {"type": "string"}, "created_at": {"$ref": "#/$defs/ns"}, "last_used_at": {"$ref": "#/$defs/ns"}, "active": {"type": "boolean"}, "current": {"type": "boolean"}}},
+"keys": {"type": "array", "items": {"$ref": "#/$defs/key"}},
+"kv": {"type": "object", "required": ["key", "value"], "properties": {"key": {"type": "string"}, "value": {"$ref": "#/$defs/ns"}}},
+"telemetry": {"type": "object", "required": ["enabled", "reason", "install_id", "endpoint", "next_daily"], "properties": {"enabled": {"type": "boolean"}, "reason": {"type": "string"}, "install_id": {"$ref": "#/$defs/ns"}, "endpoint": {"type": "string"}, "next_daily": {"type": ["object", "null"]}}}
+},
+"commands": {
+"logout": {"type": "object", "required": ["logged_out"], "properties": {"logged_out": {"type": "string"}}},
+"whoami": {"$ref": "#/$defs/whoami"},
+"auth status": {"anyOf": [{"$ref": "#/$defs/whoami"}, {"type": "object", "required": ["active", "profiles"], "properties": {"active": {"type": "string"}, "profiles": {"$ref": "#/$defs/profiles"}}}]},
+"account": {"type": "array", "items": {"type": "object", "required": ["name", "active", "default_model", "has_key"]}},
+"account list": {"type": "array", "items": {"type": "object", "required": ["name", "active", "default_model", "has_key"]}},
+"models": {"anyOf": [{"type": "object", "required": ["auto", "preset", "models"], "properties": {"models": {"type": "array", "items": {"type": "object", "required": ["id", "name", "owned_by", "context_length", "pinned"]}}}}, {"type": "object", "required": ["object", "data"], "properties": {"data": {"type": "array"}}}]},
+"chat": {"type": "object", "required": ["id", "model", "content", "finish_reason", "usage", "timing"], "properties": {"model": {"type": "string"}, "content": {"type": "string"}, "timing": {"type": "object", "required": ["total_ms"]}}},
+"keys": {"$ref": "#/$defs/keys"},
+"keys list": {"$ref": "#/$defs/keys"},
+"keys create": {"type": "object", "required": ["name", "hash", "created"], "properties": {"name": {"type": "string"}, "hash": {"type": "string"}, "created": {"type": "boolean"}}},
+"keys rotate": {"type": "object", "required": ["name", "hash", "key", "stored", "saved", "rotated"], "properties": {"stored": {"$ref": "#/$defs/strs"}, "rotated": {"const": true}}},
+"artifact rm": {"type": "object", "required": ["deleted"], "properties": {"deleted": {"type": "boolean"}}},
+"agents": {"type": "array", "items": {"$ref": "#/$defs/agent"}},
+"agents list": {"type": "array", "items": {"$ref": "#/$defs/agent"}},
+"agents get": {"$ref": "#/$defs/agent"},
+"agents set": {"$ref": "#/$defs/agent"},
+"agents unset": {"$ref": "#/$defs/agent"},
+"agents install": {"$ref": "#/$defs/agent"},
+"upgrade": {"type": "object", "required": ["last_check", "channel", "bad_versions", "current", "auto_update"], "properties": {"last_check": {"type": "integer"}, "channel": {"enum": ["stable", "beta"]}, "bad_versions": {"$ref": "#/$defs/strs"}, "current": {"type": "string"}, "auto_update": {"type": "boolean"}}},
+"telemetry": {"$ref": "#/$defs/telemetry"},
+"telemetry status": {"$ref": "#/$defs/telemetry"},
+"config get": {"anyOf": [{"$ref": "#/$defs/kv"}, {"type": "object", "required": ["path", "active_profile", "launcher"]}]},
+"mcp url": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string"}}},
+"pool stats": {"type": "object", "required": ["stats", "providers", "free_coverage"]}
+},
+"passthrough": ["models show", "keys show", "keys update", "credits", "credits balance", "credits history", "usage", "logs", "logs sessions", "generation", "artifact", "artifact publish", "artifact ls", "stats", "transactions", "embed", "decision", "presets", "mcp connections", "api"]
+}

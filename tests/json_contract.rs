@@ -127,7 +127,13 @@ fn anyr(args: &[&str], base: &str, home: &std::path::Path) -> (i32, String, Stri
     )
 }
 
-fn check(args: &[&str], base: &str, json_output: bool) -> Result<(), String> {
+/// Ok(true) when stdout was checked against the path's `output` schema.
+fn check(
+    args: &[&str],
+    base: &str,
+    json_output: bool,
+    output: Option<&Value>,
+) -> Result<bool, String> {
     let home = tempdir();
     let (code, out, err) = anyr(args, base, &home);
     let what = format!("`anyr {} --json` (exit {code})", args.join(" "));
@@ -138,17 +144,27 @@ fn check(args: &[&str], base: &str, json_output: bool) -> Result<(), String> {
         // `json: false` in the tree: the command has no JSON form (a shell
         // script, a launcher); only its errors must be JSON.
         if out.trim().is_empty() || !json_output {
-            return Ok(()); // nothing to print (e.g. a quiet write)
+            return Ok(false); // nothing to print (e.g. a quiet write)
         }
-        return serde_json::from_str::<Value>(&out)
-            .map(|_| ())
-            .map_err(|e| format!("{what}: stdout is not JSON ({e}):\n{out}"));
+        let v = serde_json::from_str::<Value>(&out)
+            .map_err(|e| format!("{what}: stdout is not JSON ({e}):\n{out}"))?;
+        let Some(schema) = output else {
+            return Ok(false);
+        };
+        let errors = anyr_cli::schema::validate(schema, &v);
+        if !errors.is_empty() {
+            return Err(format!(
+                "{what}: stdout does not match `anyr schema` output:\n{}\n{out}",
+                errors.join("\n")
+            ));
+        }
+        return Ok(true);
     }
     // A failure: either a JSON result on stdout (e.g. `relay doctor` with a
     // failed check), or one JSON error on stderr carrying this exit code.
     if !out.trim().is_empty() {
         return serde_json::from_str::<Value>(&out)
-            .map(|_| ())
+            .map(|_| false)
             .map_err(|e| format!("{what}: failed with non-JSON stdout ({e}):\n{out}"));
     }
     let lines: Vec<&str> = err.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -165,7 +181,24 @@ fn check(args: &[&str], base: &str, json_output: bool) -> Result<(), String> {
     if v["error"]["message"].as_str().is_none_or(str::is_empty) {
         return Err(format!("{what}: error.message is empty:\n{err}"));
     }
-    Ok(())
+    Ok(false)
+}
+
+/// `anyr schema` entries by path.
+fn schema_outputs() -> std::collections::BTreeMap<String, Value> {
+    let out = Command::new(env!("CARGO_BIN_EXE_anyr"))
+        .arg("schema")
+        .env("ANYR_NO_UPDATE", "1")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).expect("schema parses");
+    v["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e.get("output").is_some())
+        .map(|e| (e["name"].as_str().unwrap().to_string(), e["output"].clone()))
+        .collect()
 }
 
 fn tempdir() -> std::path::PathBuf {
@@ -205,18 +238,69 @@ fn every_command_and_subcommand_honours_the_json_contract() {
         }
     }
     assert!(runs.len() > 60, "tree looks too small: {}", runs.len());
-    let mut failures = Vec::new();
+    // Variants the plain walk does not reach: (path, extra args).
+    let mut variants: Vec<(String, &str)> = Vec::new();
+    for (path, extra) in [
+        ("upgrade", &["--status"][..]),
+        ("auth status", &["--local"]),
+        ("agents get", &["claude"]),
+        ("agents set", &["claude", "--model", "a/b"]),
+        ("agents unset", &["claude", "--model"]),
+        ("config get", &["launcher.agent"]),
+        ("artifact rm", &["x", "--yes"]),
+        ("chat", &["hi"]),
+    ] {
+        let mut run: Vec<String> = path.split(' ').map(String::from).collect();
+        run.extend(extra.iter().map(|s| s.to_string()));
+        variants.push((run.join(" "), path));
+        runs.push((run, true));
+    }
+    let outputs = schema_outputs();
+    let (mut failures, mut validated) = (Vec::new(), Vec::new());
     for (run, json) in &runs {
         let joined = run.join(" ");
         if SKIP.contains(&joined.as_str()) {
             continue;
         }
+        let path = variants
+            .iter()
+            .find(|(run, _)| *run == joined)
+            .map_or(joined.as_str(), |(_, p)| p);
         let args: Vec<&str> = run.iter().map(String::as_str).collect();
-        if let Err(e) = check(&args, &base, *json) {
-            failures.push(e);
+        match check(&args, &base, *json, outputs.get(path)) {
+            Ok(true) => validated.push(joined),
+            Ok(false) => {}
+            Err(e) => failures.push(e),
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    // WHY: the schema check must really run, not pass by skipping.
+    let mut must = vec![
+        "agents list",
+        "agents get claude",
+        "agents set claude --model a/b",
+        "auth status --local",
+        "upgrade --status",
+        "telemetry status",
+        "config get launcher.agent",
+    ];
+    // The mock is reached over a socket, which Windows cannot open here
+    // (env_clear drops SystemRoot): those runs exit 7 there.
+    if cfg!(unix) {
+        must.extend([
+            "whoami",
+            "keys list",
+            "models",
+            "chat hi",
+            "artifact rm x --yes",
+        ]);
+    }
+    for want in must {
+        assert!(
+            validated.iter().any(|v| v == want),
+            "{want} not validated: {validated:?}"
+        );
+    }
 }
 
 #[test]
