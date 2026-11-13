@@ -10,6 +10,60 @@ GitHub Releases use this file as the release notes (full history through that ta
 
 * **cli:** add `anyr decision` for typed `POST /api/v1/decisions` requests with flag or stdin JSON input. Known Decisions models are refused by chat-agent launchers. ([duyet/anyrouter#3550](https://github.com/duyet/anyrouter/issues/3550))
 
+## [0.1.44](https://github.com/AnyRouterHQ/cli/compare/v0.1.43...v0.1.44) (2026-11-13)
+
+
+### Features
+
+* **agents:** add anyr agents list|get|set|unset|install and login --key-stdin ([d756aff](https://github.com/AnyRouterHQ/cli/commit/d756aff2da7d6d559da25d8353f088bb062db6b0))
+* **auth:** auth list|add|rename|remove and auth status --local ([3543204](https://github.com/AnyRouterHQ/cli/commit/3543204648b49a63f67194fbc037cb2d8f763ab8))
+* **credits:** add credits balance and history ([26b86fc](https://github.com/AnyRouterHQ/cli/commit/26b86fc1a3eee4f977fde4b1f054ac4daaccdc17))
+* **exit:** add exits 6 confirm_required, 7 network and 8 payment_required ([9970b71](https://github.com/AnyRouterHQ/cli/commit/9970b71710cc0a24a7e472dbda0cefd15c736ead))
+* **install:** add install.ps1, a native Windows installer ([031de8b](https://github.com/AnyRouterHQ/cli/commit/031de8bf8bd0cac45ede5ea9f6b4bafa12e74da1))
+* **install:** support Windows and OTEL endpoint for telemetry ([12f673c](https://github.com/AnyRouterHQ/cli/commit/12f673cc66bebc51a44e6e2853f74fcdbcca7dc3))
+* **keys:** add --if-missing to keys create and --if-exists to delete verbs ([bc1edac](https://github.com/AnyRouterHQ/cli/commit/bc1edace540dcda2db3d994b1a81d1f02ef26dc9))
+* **keys:** add keys rotate ([2daae9b](https://github.com/AnyRouterHQ/cli/commit/2daae9b6e213a2a97990cf9d95eee9e3fa632205))
+* **launch:** prove the launcher works without a TTY; HUD prints the command it ran ([7a3d779](https://github.com/AnyRouterHQ/cli/commit/7a3d7796dbc2cf708d91d255d0419f6806ecf554))
+* **report:** add anyr report and last-error.json ([386e9fe](https://github.com/AnyRouterHQ/cli/commit/386e9fef9032dac38ac025ef01475ed25492da54))
+* **schema:** add anyr schema, a typed command map for agents ([03d662d](https://github.com/AnyRouterHQ/cli/commit/03d662d92e9bd23fcc8854eca16eac0d10d11188))
+* **schema:** idempotent and output schemas in anyr schema ([8c478bb](https://github.com/AnyRouterHQ/cli/commit/8c478bb4341d9bad6c51e4303069610d8dd9d36e))
+* **setup:** install the static musl build on Alpine and old glibc ([24f1917](https://github.com/AnyRouterHQ/cli/commit/24f1917057991d0a52182bae4b382d689c0663d0))
+* **setup:** print installed version, fail on killed binary; installer URL is anyrouter.dev/cli.sh ([66791b1](https://github.com/AnyRouterHQ/cli/commit/66791b1046d5d4173a553810b1a6b4586cf54c39))
+* **stats:** add stats reports for usage analytics ([f902655](https://github.com/AnyRouterHQ/cli/commit/f902655c82d26d48ee0cc8120ad2a664e89cd4c0))
+* **telemetry:** add anyr telemetry status|on|off|reset and the one-time notice ([67c1fb4](https://github.com/AnyRouterHQ/cli/commit/67c1fb45caa05b49e31270d8110251f437c5c874))
+* **telemetry:** capture panics as redacted crash reports and send them as cli_crash ([cb1bffa](https://github.com/AnyRouterHQ/cli/commit/cb1bffa6ab30128db04bfb257281d0f35deafcd5))
+* **telemetry:** count commands, exits, errors and agents per day on the daily ping ([12532d5](https://github.com/AnyRouterHQ/cli/commit/12532d5ea9e22d027bec1da1e670a0e954ab1320))
+* **update:** health-check each swap and let a new beta age 30 minutes ([46e027c](https://github.com/AnyRouterHQ/cli/commit/46e027cbb2689107d3a35cc30ea473a99ab4458f))
+* **update:** keep a musl install on the musl asset ([22e46e3](https://github.com/AnyRouterHQ/cli/commit/22e46e3f42d7303375d5c79b8dc198ef692894a0))
+* **update:** point users at project-site installer on total failure ([9012065](https://github.com/AnyRouterHQ/cli/commit/901206542724a872b5110d5cf1a224a73ac3e782))
+
+
+### Bug Fixes
+
+* **build:** add wasm stub for http_get_github_unauth ([6185ff5](https://github.com/AnyRouterHQ/cli/commit/6185ff53e2f867b037a15af45824674c5df4c09f))
+* **exit:** keep the exit-6 hint runnable and request_id tied to its reply ([56b8861](https://github.com/AnyRouterHQ/cli/commit/56b8861f5f4fdcc375c30694151cd541ad13df33))
+* **keys:** keep --if-missing script-safe and --if-exists narrow ([34dfd7b](https://github.com/AnyRouterHQ/cli/commit/34dfd7b93e4682f8adc86b6e992034663a9f8490))
+* **release:** re-sign macOS binaries after strip so arm64 does not SIGKILL ([7c21ce9](https://github.com/AnyRouterHQ/cli/commit/7c21ce9e7ba6e04c9accb018f79923e8ef4152ff))
+* **setup.sh:** clear macOS quarantine xattr after install ([4c9191a](https://github.com/AnyRouterHQ/cli/commit/4c9191a0e331834e96861fb8f72b996a2c831313))
+* **setup.sh:** try unauthenticated GitHub REST API before HTML scraping ([3183c85](https://github.com/AnyRouterHQ/cli/commit/3183c859fc7d0109db7bdb8a8e5d4dce88e7d7f9))
+* **setup:** install via temp file + rename, nicer output, sudo notice; CI installs twice on macOS ([b42b24f](https://github.com/AnyRouterHQ/cli/commit/b42b24f69c00783fae653391abd4abec6a48a5ec))
+* **setup:** under sudo, install for the invoking user and hand files back to them ([1b8696d](https://github.com/AnyRouterHQ/cli/commit/1b8696d90e7290d136b408591af1e70d9c8ebad5))
+* **spinner:** clip frames to terminal width so long messages do not wrap ([2032f02](https://github.com/AnyRouterHQ/cli/commit/2032f02e019f25fcfdd2fde21a027a30cdf9bc3f))
+* **telemetry:** do not print the telemetry notice (opt-out is in the docs) ([7f536e3](https://github.com/AnyRouterHQ/cli/commit/7f536e35f48ea701da5368f16d11dfe9bd118240))
+* **update:** check a build starts before the swap, not only after ([3da7f45](https://github.com/AnyRouterHQ/cli/commit/3da7f45526ff716fafd1be71f9a6f430b83a7930))
+* **update:** name .old when restoring it fails after a bad swap ([b2166f0](https://github.com/AnyRouterHQ/cli/commit/b2166f0684a1cb39ede021d622b77acc3590a897))
+* **update:** run the background check for launchers started without a TTY ([3440f0d](https://github.com/AnyRouterHQ/cli/commit/3440f0d0a00ccbcd22e4be4f4597031fc90d6051))
+
+
+### Performance Improvements
+
+* **config:** print local settings with no network call off a terminal ([2664918](https://github.com/AnyRouterHQ/cli/commit/26649188230717d132b1f48ea8d7bc2053bda45b))
+* **size:** build the OTLP telemetry body from a parsed template ([1181259](https://github.com/AnyRouterHQ/cli/commit/1181259e7b1879396c043d6b72496df123478358))
+* **size:** pack long help pages deflated at build time ([218d340](https://github.com/AnyRouterHQ/cli/commit/218d340be8732e3d6dc7083523f0af0a9211149b))
+* **size:** pack the completion scripts and api/publish help too ([eb5e360](https://github.com/AnyRouterHQ/cli/commit/eb5e360e551c46c33f4085d2b36ef3e479ac4734))
+* **size:** pack the onboard prompts with the help pages ([8a8bf05](https://github.com/AnyRouterHQ/cli/commit/8a8bf054584d3d90779fbee88f1b8c77d276c51b))
+* **size:** route every sort through one shared index sort ([734dcf3](https://github.com/AnyRouterHQ/cli/commit/734dcf337d65832acf03153db04b21cdff3f0d1e))
+
 ## [0.1.43](https://github.com/AnyRouterHQ/cli/compare/v0.1.42...v0.1.43) (2026-11-09)
 
 
