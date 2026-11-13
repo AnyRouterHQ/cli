@@ -17,6 +17,29 @@ import sys
 import time
 
 
+def reap(pid: int, until: float) -> int:
+    """Wait for the child until `until`, then kill it.
+
+    The pty reports EOF as soon as the child closes it, which can be before
+    the child is reapable. A bare WNOHANG there sees a live child, kills a
+    process that was exiting cleanly and reports failure.
+    """
+    while True:
+        wpid, status = os.waitpid(pid, os.WNOHANG)
+        if wpid == pid:
+            return status
+        if time.time() >= until:
+            break
+        time.sleep(0.02)
+    for sig in (15, 9):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            break
+        time.sleep(0.2)
+    return os.waitpid(pid, 0)[1]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Drive anyr in a PTY")
     parser.add_argument("--timeout", type=float, default=8.0)
@@ -51,6 +74,7 @@ def main() -> int:
     sent = not args.send
     wait_re = re.compile(args.wait.encode() if args.wait else b"^")
     waited = not args.wait
+    eof = False
 
     try:
         while time.time() < deadline:
@@ -60,8 +84,9 @@ def main() -> int:
                 try:
                     chunk = os.read(master_fd, 4096)
                 except OSError:
-                    break
+                    chunk = b""
                 if not chunk:
+                    eof = True
                     break
                 buffer.extend(chunk)
                 if not waited and wait_re.search(bytes(buffer)):
@@ -71,7 +96,9 @@ def main() -> int:
                     os.write(master_fd, payload)
                     sent = True
             else:
-                if waited and sent:
+                # Stop on a quiet pty only after a --send; otherwise read to
+                # EOF, which comes when the child closes the terminal.
+                if args.send and waited and sent:
                     # Drain a little more after send, then stop if quiet.
                     time.sleep(0.15)
                     ready, _, _ = select.select([master_fd], [], [], 0.2)
@@ -84,15 +111,9 @@ def main() -> int:
             os.close(master_fd)
         except OSError:
             pass
-        try:
-            _, status = os.waitpid(pid, os.WNOHANG)
-            if status == 0:
-                os.kill(pid, 15)
-                time.sleep(0.2)
-                os.kill(pid, 9)
-                _, status = os.waitpid(pid, 0)
-        except (ChildProcessError, ProcessLookupError, OSError):
-            status = 0
+        # After EOF the child is exiting: give it time. Otherwise it is still
+        # running past the deadline or the quiet drain, so stop it now.
+        status = reap(pid, time.time() + (5 if eof else 0))
 
     text = buffer.decode("utf-8", errors="replace")
     sys.stdout.write(text)
