@@ -533,11 +533,19 @@ fn replace_current_binary(
 ) -> Result<PathBuf, String> {
     let dest = install_dest()?;
     let (tmp, _) = download_verified(url, &dest, allow_downgrade, env)?;
+    let version = release_tag_from_url(url).map_or("the new build", |t| t.trim_start_matches('v'));
+    let mut state = UpdateState::load(env);
+    if !crate::autoupdate::starts_ok(&tmp) {
+        let _ = fs::remove_file(&tmp);
+        state.mark_bad(version);
+        state.save(env);
+        return Err(format!(
+            "anyr {version} did not start; kept the current build"
+        ));
+    }
     crate::autoupdate::swap_in(&tmp, &dest).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
     })?;
-    let version = release_tag_from_url(url).map_or("the new build", |t| t.trim_start_matches('v'));
-    let mut state = UpdateState::load(env);
     crate::autoupdate::keep_if_healthy(&dest, version, &mut state).inspect_err(|_| {
         state.save(env);
     })?;
@@ -1230,6 +1238,10 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
             }
             state.clear_pending();
             state.skip_version = None;
+            // It started, so an earlier "did not start" was not the build.
+            state
+                .bad_versions
+                .retain(|v| !version_eq(v, rel.version_str()));
             state.save(env);
             Ok(0)
         }

@@ -28,10 +28,12 @@
 //!   a hard link plus rename, keeping the old build as `.anyr.prev` for
 //!   `update --rollback`. A stale, tampered, cross-channel, or not-newer
 //!   build is discarded instead of installed.
-//! * Health check: right after a swap (staged or `anyr update`) the new
-//!   binary must run `--version` within 10 seconds. If it does not, the
-//!   previous build is put back, the failed build is deleted, and its version
-//!   goes on `bad_versions`, which the background check never stages again.
+//! * Health check: a verified build must run `--version` within 10 seconds
+//!   before it is swapped in, and again right after (staged or `anyr
+//!   update`). On a failure before the swap the build is discarded; after
+//!   it, the previous build is put back and the failed one deleted. Either
+//!   way its version goes on `bad_versions`, which the background check
+//!   never stages again.
 //! * Beta age: the background check skips a prerelease published less than
 //!   30 minutes ago, so install-smoke can fail and withdraw it first. An
 //!   explicit `anyr update` is not delayed, and a release with no publish
@@ -192,7 +194,7 @@ impl UpdateState {
         self.bad_versions.iter().any(|v| v == version)
     }
 
-    fn mark_bad(&mut self, version: &str) {
+    pub fn mark_bad(&mut self, version: &str) {
         let version = version.trim_start_matches('v');
         if !self.is_bad(version) {
             self.bad_versions.push(version.to_string());
@@ -499,13 +501,14 @@ pub fn rollback(dest: &Path) -> Result<(), String> {
     })
 }
 
-/// How long a swapped-in build gets to answer `--version`. Generous: a
-/// virus scan on a new exe's first launch must not mark a good build bad.
+/// How long a new build gets to answer `--version`. Generous: a virus scan
+/// on a new exe's first launch must not mark a good build bad.
+#[cfg(feature = "native")]
 const HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Does `exe --version` exit 0 within `HEALTH_TIMEOUT`?
 #[cfg(feature = "native")]
-fn starts_ok(exe: &Path) -> bool {
+pub fn starts_ok(exe: &Path) -> bool {
     let child = std::process::Command::new(exe)
         .arg("--version")
         .env("ANYR_NO_UPDATE", "1")
@@ -534,7 +537,7 @@ fn starts_ok(exe: &Path) -> bool {
 }
 
 #[cfg(not(feature = "native"))]
-fn starts_ok(_exe: &Path) -> bool {
+pub fn starts_ok(_exe: &Path) -> bool {
     true
 }
 
@@ -547,10 +550,12 @@ pub fn keep_if_healthy(dest: &Path, version: &str, state: &mut UpdateState) -> R
         return Ok(());
     }
     state.mark_bad(version);
-    // swap_in keeps the old build at `.old` when its last rename failed.
+    // When swap_in's last rename failed, `.old` holds the build this swap
+    // replaced and `.prev` an older one: restore `.old`, never the older.
     let prev = sibling(dest, "prev");
     let old = sibling(dest, "old");
-    if !prev.is_file() && old.is_file() {
+    if old.is_file() {
+        clear_slot(&prev);
         let _ = fs::rename(&old, &prev);
     }
     match rollback(dest) {
@@ -563,7 +568,9 @@ pub fn keep_if_healthy(dest: &Path, version: &str, state: &mut UpdateState) -> R
         }
         Err(err) => Err(format!(
             "anyr {version} did not start, and the previous build could not be restored ({err}); \
-reinstall with: curl -fsSL https://anyrouter.dev/cli.sh | bash"
+rename {} to {} to get it back",
+            prev.display(),
+            dest.display()
         )),
     }
 }
@@ -572,11 +579,14 @@ reinstall with: curl -fsSL https://anyrouter.dev/cli.sh | bash"
 /// The staged file is re-hashed, and a build not newer than this one, from
 /// another channel, or a prerelease on stable is discarded, so a stale or
 /// tampered pending file can never land. A failed swap discards the build
-/// too, so the next command does not re-hash and retry it.
+/// too, so the next command does not re-hash and retry it. `starts` runs the
+/// verified build once before the swap (`starts_ok`); one that does not start
+/// is discarded and marked bad.
 pub fn apply_pending(
     dest: &Path,
     state: &mut UpdateState,
     channel: Channel,
+    starts: fn(&Path) -> bool,
 ) -> Result<Option<String>, String> {
     let (Some(path), Some(version), Some(sha)) = (
         state.pending_path.clone(),
@@ -618,6 +628,13 @@ pub fn apply_pending(
             "pending {version} changed on disk since it was verified; discarded"
         ));
     }
+    if !starts(&path) {
+        discard(state, &path);
+        state.mark_bad(&version);
+        return Err(format!(
+            "anyr {version} did not start; kept the current build and will not install {version} again"
+        ));
+    }
     if let Err(err) = swap_in(&path, dest) {
         discard(state, &path);
         state.hint = Some(format!("sudo {} update", crate::help::invoked_bin()));
@@ -657,7 +674,7 @@ pub fn on_startup(command: &str, parsed: &ParsedArgs, env: &BTreeMap<String, Str
             state = UpdateState::load(env);
             let channel = crate::upgrade::configured_channel(env);
             match crate::upgrade::install_dest().and_then(|d| {
-                let applied = apply_pending(&d, &mut state, channel)?;
+                let applied = apply_pending(&d, &mut state, channel, starts_ok)?;
                 if let Some(version) = &applied {
                     keep_if_healthy(&d, version, &mut state)?;
                 }
@@ -1151,7 +1168,7 @@ mod tests {
         fs::write(&dest, "current").unwrap();
         let mut state = pending_state(&dest, "next", "999.0.0");
         assert_eq!(
-            apply_pending(&dest, &mut state, Channel::Stable)
+            apply_pending(&dest, &mut state, Channel::Stable, |_| true)
                 .unwrap()
                 .as_deref(),
             Some("999.0.0")
@@ -1169,13 +1186,13 @@ mod tests {
         fs::write(&dest, "current").unwrap();
         let mut state = pending_state(&dest, "next", "999.0.0");
         fs::write(sibling(&dest, "pending"), "evil").unwrap();
-        assert!(apply_pending(&dest, &mut state, Channel::Stable).is_err());
+        assert!(apply_pending(&dest, &mut state, Channel::Stable, |_| true).is_err());
         assert_eq!(fs::read_to_string(&dest).unwrap(), "current");
         assert!(!sibling(&dest, "pending").exists());
 
         let mut older = pending_state(&dest, "old", "0.0.1");
         assert_eq!(
-            apply_pending(&dest, &mut older, Channel::Stable).unwrap(),
+            apply_pending(&dest, &mut older, Channel::Stable, |_| true).unwrap(),
             None
         );
         assert_eq!(fs::read_to_string(&dest).unwrap(), "current");
@@ -1193,7 +1210,7 @@ mod tests {
         let mut beta = pending_state(&dest, "next", "999.0.0-beta.1");
         beta.channel = Some("beta".into());
         assert_eq!(
-            apply_pending(&dest, &mut beta, Channel::Stable).unwrap(),
+            apply_pending(&dest, &mut beta, Channel::Stable, |_| true).unwrap(),
             None
         );
         assert_eq!(fs::read_to_string(&dest).unwrap(), "current");
@@ -1202,7 +1219,7 @@ mod tests {
 
         let mut pre_on_stable = pending_state(&dest, "next", "999.0.0-beta.1");
         assert_eq!(
-            apply_pending(&dest, &mut pre_on_stable, Channel::Stable).unwrap(),
+            apply_pending(&dest, &mut pre_on_stable, Channel::Stable, |_| true).unwrap(),
             None,
             "a prerelease never lands on stable"
         );
@@ -1211,11 +1228,54 @@ mod tests {
         let mut ok = pending_state(&dest, "next", "999.0.0-beta.1");
         ok.channel = Some("beta".into());
         assert_eq!(
-            apply_pending(&dest, &mut ok, Channel::Beta)
+            apply_pending(&dest, &mut ok, Channel::Beta, |_| true)
                 .unwrap()
                 .as_deref(),
             Some("999.0.0-beta.1")
         );
+    }
+
+    #[test]
+    fn apply_pending_discards_a_build_that_does_not_start() {
+        // WHY: a verified build that cannot run must never take the place of
+        // the working one, and must not be staged again.
+        let dir = tmp_dir("nostart");
+        let dest = dir.join("anyr");
+        fs::write(&dest, "current").unwrap();
+        let mut state = pending_state(&dest, "next", "999.0.0");
+        let err = apply_pending(&dest, &mut state, Channel::Stable, |_| false).unwrap_err();
+        assert!(err.contains("did not start"), "{err}");
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "current");
+        assert!(!sibling(&dest, "pending").exists());
+        assert_eq!(state.pending_path, None);
+        assert!(state.is_bad("999.0.0"));
+    }
+
+    #[test]
+    fn a_swapped_in_build_that_does_not_start_is_rolled_back_and_deleted() {
+        // WHY: the last line of defence after a swap. The text files here
+        // cannot start, so the real `--version` check fails on every OS.
+        let dir = tmp_dir("rollback-bad");
+        let dest = dir.join("anyr");
+        fs::write(&dest, "bad").unwrap();
+        fs::write(sibling(&dest, "prev"), "good").unwrap();
+        let mut state = UpdateState::default();
+        let err = keep_if_healthy(&dest, "999.0.0", &mut state).unwrap_err();
+        assert!(err.contains("did not start"), "{err}");
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "good");
+        assert!(
+            !sibling(&dest, "prev").exists(),
+            "`update --rollback` must not find the bad build"
+        );
+        assert!(state.is_bad("999.0.0"));
+
+        // A failed last rename in swap_in leaves the replaced build at `.old`
+        // and an older one at `.prev`: restore `.old`, never downgrade.
+        fs::write(&dest, "bad").unwrap();
+        fs::write(sibling(&dest, "old"), "current").unwrap();
+        fs::write(sibling(&dest, "prev"), "older").unwrap();
+        assert!(keep_if_healthy(&dest, "999.0.1", &mut state).is_err());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "current");
     }
 
     #[test]
@@ -1225,7 +1285,7 @@ mod tests {
         let dir = tmp_dir("swapfail");
         let dest = dir.join("anyr"); // never created: the swap cannot keep a prev
         let mut state = pending_state(&dest, "next", "999.0.0");
-        assert!(apply_pending(&dest, &mut state, Channel::Stable).is_err());
+        assert!(apply_pending(&dest, &mut state, Channel::Stable, |_| true).is_err());
         assert_eq!(state.pending_path, None);
         assert_eq!(state.pending_sha256, None);
         assert!(!sibling(&dest, "pending").exists());
@@ -1376,7 +1436,7 @@ mod tests {
             channel: Some("stable".into()),
             ..UpdateState::default()
         };
-        let applied = apply_pending(&dest_a, &mut state, Channel::Stable).unwrap();
+        let applied = apply_pending(&dest_a, &mut state, Channel::Stable, |_| true).unwrap();
         assert_eq!(applied, None);
         assert_eq!(state.pending_path, None);
         assert!(
