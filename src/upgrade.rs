@@ -536,6 +536,11 @@ fn replace_current_binary(
     crate::autoupdate::swap_in(&tmp, &dest).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
     })?;
+    let version = release_tag_from_url(url).map_or("the new build", |t| t.trim_start_matches('v'));
+    let mut state = UpdateState::load(env);
+    crate::autoupdate::keep_if_healthy(&dest, version, &mut state).inspect_err(|_| {
+        state.save(env);
+    })?;
     Ok(dest)
 }
 
@@ -805,6 +810,21 @@ fn remove_legacy_stamp_files(env: &BTreeMap<String, String>) {
     let _ = fs::remove_file(dir.join("update.notice"));
 }
 
+/// The background check leaves a prerelease alone this long after it is
+/// published, so install-smoke can fail and withdraw it first.
+const BETA_MIN_AGE_SECS: i64 = 30 * 60;
+
+/// A prerelease published less than `BETA_MIN_AGE_SECS` ago. No publish time
+/// (the HTML listing) counts as old enough.
+fn too_young(rel: &Release, now: i64) -> bool {
+    rel.prerelease
+        && rel
+            .published_at
+            .as_deref()
+            .and_then(crate::civil::parse_utc)
+            .is_some_and(|t| now - t < BETA_MIN_AGE_SECS)
+}
+
 /// Candidates the background stager tries, newest first. Falling further
 /// back is for a person running `anyr update`.
 const AUTO_MAX_CANDIDATES: usize = 2;
@@ -843,12 +863,15 @@ fn auto_stage(
     let arch = current_arch();
     let asset = asset_name(os, arch);
     let skip = state.skip_version.clone();
+    let now = crate::civil::now_secs();
     let candidates: Vec<Release> = channel_update_candidates(&releases, channel, &asset)
         .into_iter()
         .filter(|r| {
             !skip
                 .as_deref()
                 .is_some_and(|v| version_eq(v, r.version_str()))
+                && !state.is_bad(r.version_str())
+                && !too_young(r, now)
         })
         .collect();
     let UpdatePlan::Install(installable) = plan_update(VERSION, candidates, false) else {
@@ -924,6 +947,18 @@ fn print_status(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i
     if let Some(v) = &state.skip_version {
         println!("{}", field("skipped", format!("{v} (rolled back)")));
     }
+    if !state.bad_versions.is_empty() {
+        println!(
+            "{}",
+            field(
+                "bad",
+                format!(
+                    "{} (did not start; never retried)",
+                    state.bad_versions.join(", ")
+                )
+            )
+        );
+    }
     if let Some(h) = &state.hint {
         println!("{}", field("run", h));
     }
@@ -974,6 +1009,7 @@ fn print_up_to_date(parsed: &ParsedArgs, channel: Channel) -> i32 {
         let current = Release {
             tag_name: VERSION.to_string(),
             prerelease: false,
+            published_at: None,
             assets: Vec::new(),
         };
         let body = serde_json::json!({
@@ -991,6 +1027,7 @@ fn print_up_to_date(parsed: &ParsedArgs, channel: Channel) -> i32 {
         let current = Release {
             tag_name: VERSION.to_string(),
             prerelease: false,
+            published_at: None,
             assets: Vec::new(),
         };
         println!(
@@ -1266,6 +1303,7 @@ mod tests {
         Release {
             tag_name: tag.into(),
             prerelease: tag.contains('-'),
+            published_at: None,
             assets: Vec::new(),
         }
     }
@@ -1972,6 +2010,7 @@ mod tests {
             Release {
                 tag_name: "v0.1.14".into(),
                 prerelease: false,
+                published_at: None,
                 assets: vec![crate::channel::ReleaseAsset {
                     name: "anyr-linux-x86_64".into(),
                     browser_download_url: "https://example/v0.1.14/anyr-linux-x86_64".into(),
@@ -1980,6 +2019,7 @@ mod tests {
             Release {
                 tag_name: "v0.1.13".into(),
                 prerelease: false,
+                published_at: None,
                 assets: vec![crate::channel::ReleaseAsset {
                     name: "anyr-linux-x86_64".into(),
                     browser_download_url: "https://example/v0.1.13/anyr-linux-x86_64".into(),

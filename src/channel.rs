@@ -88,6 +88,9 @@ pub struct Release {
     pub tag_name: String,
     pub prerelease: bool,
     pub assets: Vec<ReleaseAsset>,
+    /// `published_at` from the API listing (UTC, RFC 3339). The HTML
+    /// listing has none.
+    pub published_at: Option<String>,
 }
 
 impl Release {
@@ -256,6 +259,10 @@ pub fn parse_releases(json: &str) -> Result<Vec<Release>, String> {
         out.push(Release {
             tag_name: tag.to_string(),
             prerelease,
+            published_at: item
+                .get("published_at")
+                .and_then(|p| p.as_str())
+                .map(str::to_string),
             assets,
         });
     }
@@ -452,6 +459,7 @@ pub fn parse_releases_html(html: &str) -> Result<Vec<Release>, String> {
         out.push(Release {
             tag_name: tag,
             prerelease,
+            published_at: None,
             assets,
         });
     }
@@ -460,6 +468,7 @@ pub fn parse_releases_html(html: &str) -> Result<Vec<Release>, String> {
         out.push(Release {
             tag_name: tag,
             prerelease,
+            published_at: None,
             assets,
         });
     }
@@ -686,6 +695,7 @@ mod tests {
         let mut rel = Release {
             tag_name: "v0.1.12-beta.98".into(),
             prerelease: true,
+            published_at: None,
             assets: Vec::new(),
         };
         merge_expanded_assets(&mut rel, html);

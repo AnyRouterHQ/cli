@@ -28,6 +28,14 @@
 //!   a hard link plus rename, keeping the old build as `.anyr.prev` for
 //!   `update --rollback`. A stale, tampered, cross-channel, or not-newer
 //!   build is discarded instead of installed.
+//! * Health check: right after a swap (staged or `anyr update`) the new
+//!   binary must run `--version` within 10 seconds. If it does not, the
+//!   previous build is put back, the failed build is deleted, and its version
+//!   goes on `bad_versions`, which the background check never stages again.
+//! * Beta age: the background check skips a prerelease published less than
+//!   30 minutes ago, so install-smoke can fail and withdraw it first. An
+//!   explicit `anyr update` is not delayed, and a release with no publish
+//!   time (the HTML listing) is not delayed either.
 //! * Opt-outs: CI, `ANYR_NO_AUTO_UPDATE`, `ANYR_NO_UPDATE`, config
 //!   `update.auto`, non-terminal output (`--json`, `--quiet`, piped stdio
 //!   without `ANYR_AUTO_UPDATE=1`), cargo `target/` dev builds, and any
@@ -82,7 +90,12 @@ pub struct UpdateState {
     pub hint: Option<String>,
     /// Version the hint was last printed for, so it prints once.
     pub notified: Option<String>,
+    /// Versions that did not start after a swap; never staged again.
+    pub bad_versions: Vec<String>,
 }
+
+/// Enough to cover a run of broken releases; the oldest entry drops first.
+const MAX_BAD_VERSIONS: usize = 8;
 
 fn opt(map: &Map<String, Value>, key: &str) -> Option<String> {
     map.get(key)
@@ -118,6 +131,16 @@ impl UpdateState {
             skip_version: opt(&map, "skip_version"),
             hint: opt(&map, "hint"),
             notified: opt(&map, "notified"),
+            bad_versions: map
+                .get("bad_versions")
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -133,6 +156,7 @@ impl UpdateState {
             "skip_version": self.skip_version,
             "hint": self.hint,
             "notified": self.notified,
+            "bad_versions": self.bad_versions,
         })
     }
 
@@ -161,6 +185,20 @@ impl UpdateState {
         self.pending_path = None;
         self.pending_version = None;
         self.pending_sha256 = None;
+    }
+
+    pub fn is_bad(&self, version: &str) -> bool {
+        let version = version.trim_start_matches('v');
+        self.bad_versions.iter().any(|v| v == version)
+    }
+
+    fn mark_bad(&mut self, version: &str) {
+        let version = version.trim_start_matches('v');
+        if !self.is_bad(version) {
+            self.bad_versions.push(version.to_string());
+        }
+        let extra = self.bad_versions.len().saturating_sub(MAX_BAD_VERSIONS);
+        self.bad_versions.drain(..extra);
     }
 
     fn checked_within(&self, interval: u64, now: u64) -> bool {
@@ -461,6 +499,75 @@ pub fn rollback(dest: &Path) -> Result<(), String> {
     })
 }
 
+/// How long a swapped-in build gets to answer `--version`. Generous: a
+/// virus scan on a new exe's first launch must not mark a good build bad.
+const HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Does `exe --version` exit 0 within `HEALTH_TIMEOUT`?
+#[cfg(feature = "native")]
+fn starts_ok(exe: &Path) -> bool {
+    let child = std::process::Command::new(exe)
+        .arg("--version")
+        .env("ANYR_NO_UPDATE", "1")
+        .env("ANYR_TELEMETRY", "0")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + HEALTH_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "native"))]
+fn starts_ok(_exe: &Path) -> bool {
+    true
+}
+
+/// Run right after `version` was swapped in at `dest`. A build that does not
+/// start is swapped back out for `.anyr.prev` and deleted, so neither the
+/// next command nor `update --rollback` runs it, and its version is recorded
+/// so the background check never stages it again.
+pub fn keep_if_healthy(dest: &Path, version: &str, state: &mut UpdateState) -> Result<(), String> {
+    if starts_ok(dest) {
+        return Ok(());
+    }
+    state.mark_bad(version);
+    // swap_in keeps the old build at `.old` when its last rename failed.
+    let prev = sibling(dest, "prev");
+    let old = sibling(dest, "old");
+    if !prev.is_file() && old.is_file() {
+        let _ = fs::rename(&old, &prev);
+    }
+    match rollback(dest) {
+        Ok(()) => {
+            // The failed build is now `.prev`.
+            clear_slot(&prev);
+            Err(format!(
+                "anyr {version} did not start; kept the previous build and will not install {version} again"
+            ))
+        }
+        Err(err) => Err(format!(
+            "anyr {version} did not start, and the previous build could not be restored ({err}); \
+reinstall with: curl -fsSL https://anyrouter.dev/cli.sh | bash"
+        )),
+    }
+}
+
 /// Swap in a verified pending build. Returns the version now installed.
 /// The staged file is re-hashed, and a build not newer than this one, from
 /// another channel, or a prerelease on stable is discarded, so a stale or
@@ -549,9 +656,13 @@ pub fn on_startup(command: &str, parsed: &ParsedArgs, env: &BTreeMap<String, Str
             // Reload under the lock: the checker may have just written it.
             state = UpdateState::load(env);
             let channel = crate::upgrade::configured_channel(env);
-            match crate::upgrade::install_dest()
-                .and_then(|d| apply_pending(&d, &mut state, channel))
-            {
+            match crate::upgrade::install_dest().and_then(|d| {
+                let applied = apply_pending(&d, &mut state, channel)?;
+                if let Some(version) = &applied {
+                    keep_if_healthy(&d, version, &mut state)?;
+                }
+                Ok(applied)
+            }) {
                 Ok(Some(to)) => note(&format!("anyr updated {VERSION} → {to}")),
                 Ok(None) => {}
                 Err(err) => state.last_error = Some(err),
@@ -783,9 +894,26 @@ mod tests {
             skip_version: Some("0.1.30".into()),
             hint: Some("brew upgrade anyr".into()),
             notified: Some("0.1.31".into()),
+            bad_versions: vec!["0.1.32".into()],
         };
         assert_eq!(UpdateState::from_json(&state.to_json().to_string()), state);
         assert_eq!(UpdateState::from_json("not json"), UpdateState::default());
+    }
+
+    #[test]
+    fn bad_versions_are_deduplicated_and_bounded() {
+        // WHY: a run of broken releases must all stay skipped, without the
+        // state file growing forever.
+        let mut s = UpdateState::default();
+        s.mark_bad("v0.1.50");
+        s.mark_bad("0.1.50");
+        assert_eq!(s.bad_versions, vec!["0.1.50"]);
+        assert!(s.is_bad("v0.1.50") && !s.is_bad("0.1.51"));
+        for i in 0..20 {
+            s.mark_bad(&format!("0.1.{}", 60 + i));
+        }
+        assert_eq!(s.bad_versions.len(), MAX_BAD_VERSIONS);
+        assert!(s.is_bad("0.1.79") && !s.is_bad("0.1.50"));
     }
 
     #[test]

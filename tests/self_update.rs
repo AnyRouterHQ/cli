@@ -18,7 +18,21 @@ use std::time::{Duration, Instant};
 use anyr_cli::channel::{asset_name, current_arch, current_os};
 use sha2::{Digest, Sha256};
 
-const NEW_BUILD: &[u8] = b"anyr build 999.0.0 from the mock release server";
+/// A build that cannot start: the post-swap health check must reject it.
+const BAD_BUILD: &[u8] = b"anyr build 999.0.0 from the mock release server";
+
+/// A build that starts (`--version` exits 0), so the swap is kept. Unix: a
+/// shell script. Windows: the real exe plus a trailer, which still runs and
+/// differs from the installed copy byte for byte.
+fn new_build() -> Vec<u8> {
+    if cfg!(windows) {
+        let mut exe = fs::read(env!("CARGO_BIN_EXE_anyr")).unwrap();
+        exe.extend_from_slice(b"\0anyr mock build 999.0.0");
+        exe
+    } else {
+        b"#!/bin/sh\necho '999.0.0 (mock build)'\n".to_vec()
+    }
+}
 
 fn asset() -> String {
     asset_name(current_os(), current_arch())
@@ -41,6 +55,8 @@ struct Release {
     body: Option<Vec<u8>>,
     /// Checksum line written for the asset; defaults to the real hash.
     checksum: Option<String>,
+    /// `published_at` in the listing; None leaves it out.
+    published_at: Option<String>,
 }
 
 impl Release {
@@ -48,10 +64,24 @@ impl Release {
         Self {
             tag,
             prerelease,
-            body: Some(NEW_BUILD.to_vec()),
+            body: Some(new_build()),
             checksum: None,
+            published_at: None,
         }
     }
+}
+
+/// RFC 3339 UTC time `secs` seconds ago, as the GitHub API writes it.
+fn published_ago(secs: i64) -> String {
+    let t = anyr_cli::civil::now_secs() - secs;
+    let (y, m, d) = anyr_cli::civil::civil_from_days(t.div_euclid(86_400));
+    let s = t.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        s / 3600,
+        s % 3600 / 60,
+        s % 60
+    )
 }
 
 /// Serves `/releases.json` (after `listing_delay`), each asset and each
@@ -138,6 +168,7 @@ fn route(path: &str, base: &str, releases: &[Release], delay: Duration) -> (u16,
                 serde_json::json!({
                     "tag_name": r.tag,
                     "prerelease": r.prerelease,
+                    "published_at": r.published_at,
                     "assets": [{
                         "name": asset,
                         "browser_download_url":
@@ -397,11 +428,11 @@ fn pending_update_applies_on_the_next_run_and_rollback_restores() {
         install.original,
         "the check must stage, not swap, the binary"
     );
-    assert_eq!(fs::read(install.sibling("pending")).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(install.sibling("pending")).unwrap(), new_build());
 
     // Next run: the staged build replaces the binary, the old one is kept.
     let out = install.run(&mock, &["config"], &[]);
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
     assert_eq!(fs::read(install.sibling("prev")).unwrap(), install.original);
     assert!(!install.sibling("pending").exists());
     assert!(install.state()["pending_path"].is_null());
@@ -416,7 +447,7 @@ fn pending_update_applies_on_the_next_run_and_rollback_restores() {
     // back as the binary with the stub as `prev`, then roll back to the stub.
     let prev = install.sibling("prev");
     fs::rename(&prev, install.root.join("prev-copy")).unwrap();
-    fs::write(&prev, NEW_BUILD).unwrap();
+    fs::write(&prev, new_build()).unwrap();
     fs::rename(&install.bin, install.root.join("stub")).unwrap();
     fs::rename(install.root.join("prev-copy"), &install.bin).unwrap();
     let out = install.run(&mock, &["update", "--rollback"], &[]);
@@ -425,7 +456,7 @@ fn pending_update_applies_on_the_next_run_and_rollback_restores() {
         "rollback failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
     assert_eq!(fs::read(&prev).unwrap(), install.original);
     assert_eq!(
         install.state()["skip_version"],
@@ -609,7 +640,7 @@ fn manual_update_installs_and_uses_a_per_process_staging_file() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
     assert_eq!(fs::read(install.sibling("prev")).unwrap(), install.original);
     assert_no_download_files(&install);
     assert!(!install.lock_held(), "lock released");
@@ -731,7 +762,7 @@ fn staged_hash_matches_the_verified_build() {
     let install = Install::new();
     install.run(&mock, &["config"], &[]);
     let state = install.wait_checked();
-    assert_eq!(state["pending_sha256"], sha_hex(NEW_BUILD), "{state}");
+    assert_eq!(state["pending_sha256"], sha_hex(&new_build()), "{state}");
     assert_no_download_files(&install);
 }
 
@@ -758,7 +789,7 @@ fn launcher_start_spawns_a_background_check() {
     );
     // Next launcher start applies the staged build.
     install.run(&mock, &[], &[("ANYR_TUI_DUMP", "1")]);
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
     assert!(install.state()["pending_path"].is_null());
 }
 
@@ -774,7 +805,7 @@ fn agent_launch_stages_on_first_run_and_applies_on_the_next() {
     assert_eq!(state["pending_version"], "999.0.0", "{state}");
     assert_eq!(fs::read(&install.bin).unwrap(), install.original);
     let out = install.run(&mock, &["claude", "--dry-run"], &[]);
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
     assert!(install.state()["pending_path"].is_null());
     // Off a TTY the notice stays out of the output.
     assert!(
@@ -809,7 +840,7 @@ fn running_process_is_never_disturbed_while_a_build_stages() {
         "the staged build must not swap while the process runs"
     );
     install.run(&mock, &["config"], &[]);
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
 }
 
 #[cfg(unix)]
@@ -861,7 +892,7 @@ fn staged_build_applies_on_the_next_tty_start_and_prints_notice() {
     );
     assert!(combined.contains("anyr updated"), "{combined}");
     assert!(combined.contains("999.0.0"), "{combined}");
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
 }
 
 #[test]
@@ -898,5 +929,117 @@ fn a_killed_stager_does_not_block_the_next_update() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(fs::read(&install.bin).unwrap(), NEW_BUILD);
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
+}
+
+#[test]
+fn a_staged_build_that_does_not_start_is_rolled_back_and_never_retried() {
+    // WHY: a release that passes its checksum but cannot run (wrong target,
+    // truncated upload, a crash at start) must not leave the user without a
+    // working anyr, and the background check must not stage it again.
+    let mut broken = Release::good("v999.0.0", false);
+    broken.body = Some(BAD_BUILD.to_vec());
+    let mock = serve(vec![broken], Duration::ZERO);
+    let install = Install::new();
+    install.run(&mock, &["config"], &[]);
+    let state = install.wait_checked();
+    assert_eq!(state["pending_version"], "999.0.0", "{state}");
+
+    let out = install.run(&mock, &["config"], &[]);
+    assert!(
+        out.status.success(),
+        "the command that hit the bad build must still run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(fs::read(&install.bin).unwrap(), install.original);
+    assert!(
+        !install.sibling("prev").exists(),
+        "the bad build must not stay as the rollback target"
+    );
+    let state = install.state();
+    assert_eq!(state["bad_versions"], serde_json::json!(["999.0.0"]));
+    assert!(state["pending_path"].is_null(), "{state}");
+    assert!(
+        state["last_error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("did not start"),
+        "{state}"
+    );
+
+    // A forced check sees 999.0.0 again and leaves it alone.
+    let hits = mock.hits.load(Ordering::SeqCst);
+    install.run(&mock, &["update", "--auto", "--force"], &[]);
+    let state = install.state();
+    assert!(state["pending_path"].is_null(), "{state}");
+    assert_eq!(
+        mock.hits.load(Ordering::SeqCst),
+        hits + 1,
+        "only the listing is fetched; the bad build is not downloaded again"
+    );
+    let status = install.run(&mock, &["update", "--status"], &[]);
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("999.0.0 (did not start"),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+}
+
+#[test]
+fn manual_update_to_a_build_that_does_not_start_keeps_the_old_one() {
+    let mut broken = Release::good("v999.0.0", false);
+    broken.body = Some(BAD_BUILD.to_vec());
+    let mock = serve(vec![broken], Duration::ZERO);
+    let install = Install::new();
+    let out = install.run(&mock, &["update"], &[]);
+    assert!(
+        !out.status.success(),
+        "a failed health check must fail update"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("did not start"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(fs::read(&install.bin).unwrap(), install.original);
+    assert!(!install.sibling("prev").exists());
+    assert_eq!(
+        install.state()["bad_versions"],
+        serde_json::json!(["999.0.0"])
+    );
+    assert_no_download_files(&install);
+}
+
+#[test]
+fn background_check_waits_for_a_beta_to_age_but_update_takes_it_now() {
+    // WHY: a beta is public before its install-smoke job finishes; the
+    // background check waits 30 minutes so a broken one can be withdrawn.
+    // An explicit `anyr update` is the user asking for it now.
+    let mut fresh = Release::good("v999.0.0-beta.2", true);
+    fresh.published_at = Some(published_ago(60));
+    let mut aged = Release::good("v999.0.0-beta.1", true);
+    aged.published_at = Some(published_ago(2 * 60 * 60));
+    let mock = serve(vec![fresh.clone(), aged], Duration::ZERO);
+    let install = Install::new();
+    install.write_config("active_profile: default\nchannel: beta\n");
+    install.run(&mock, &["config"], &[]);
+    let state = install.wait_checked();
+    assert_eq!(
+        state["pending_version"], "999.0.0-beta.1",
+        "the young beta.2 is skipped, the aged beta.1 staged: {state}"
+    );
+
+    let only_fresh = serve(vec![fresh], Duration::ZERO);
+    let install = Install::new();
+    install.write_config("active_profile: default\nchannel: beta\n");
+    install.run(&only_fresh, &["config"], &[]);
+    let state = install.wait_checked();
+    assert!(state["pending_path"].is_null(), "{state}");
+    let out = install.run(&only_fresh, &["update"], &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(fs::read(&install.bin).unwrap(), new_build());
 }
