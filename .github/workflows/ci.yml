@@ -458,6 +458,28 @@ jobs:
         with:
           python-version: "3.12"
 
+      # `gh release create` returns before every CDN edge serves the new
+      # assets, and an install that read "newest beta" too early got the
+      # previous one. Wait for this run's own tag, then install it by name.
+      - name: wait until this run's release is downloadable
+        run: |
+          set -euo pipefail
+          WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
+          case "$RUNNER_OS" in
+            Linux) ASSET=anyr-linux-x86_64 ;;
+            macOS) ASSET=anyr-darwin-arm64 ;;
+          esac
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${WANT}"
+          for i in $(seq 0 36); do
+            if curl -fsIL -o /dev/null "${BASE}/${ASSET}" && curl -fsIL -o /dev/null "${BASE}/checksums.txt"; then
+              echo "v${WANT}: ${ASSET} and checksums.txt are served after $((i * 5))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "v${WANT}: ${ASSET} or checksums.txt still not served after 3 minutes"
+          exit 1
+
       - name: install the beta with setup.sh and check the version
         run: |
           set -euo pipefail
@@ -467,17 +489,29 @@ jobs:
           # Twice into the same dir: the second run replaces a binary that has
           # already launched, the path where macOS can keep a stale signature.
           for run in 1 2; do
-            bash setup.sh --channel beta
+            bash setup.sh --channel beta --version "${WANT}"
             GOT="$("$ANYR_BIN_DIR/anyr" --version)"
             echo "run ${run}: want ${WANT}, got ${GOT}"
             case "$GOT" in "${WANT}"*) ;; *) echo "installed version is not the one just published"; exit 1;; esac
           done
 
+      # The release listing anyr reads lags the release by up to a few
+      # minutes (it once still showed the previous beta), so retry until it
+      # lists this run's tag.
       - name: anyr update --check finds the same release
         run: |
           set -euo pipefail
           export HOME="$RUNNER_TEMP/home" ANYR_NO_UPDATE=
           WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
-          OUT="$("$RUNNER_TEMP/bin/anyr" update --check --beta)"
+          for i in $(seq 0 18); do
+            OUT="$("$RUNNER_TEMP/bin/anyr" update --check --beta)"
+            if echo "$OUT" | grep -q "latest:  ${WANT}"; then
+              echo "$OUT"
+              echo "listing shows ${WANT} after $((i * 10))s"
+              exit 0
+            fi
+            sleep 10
+          done
           echo "$OUT"
-          echo "$OUT" | grep -q "latest:  ${WANT}"
+          echo "anyr update --check never listed ${WANT} in 3 minutes"
+          exit 1

@@ -46,4 +46,7 @@ jobs:
       - name: legacy /setup.sh still redirects to the installer
         run: |
           set -euo pipefail
-          curl -fsSL https://anyrouter.dev/setup.sh | head -1 | grep -q '^#!/usr/bin/env bash'
+          # Save first: `curl | head -1` under pipefail fails with curl exit 23
+          # once head closes the pipe.
+          curl -fsSL https://anyrouter.dev/setup.sh -o "$RUNNER_TEMP/legacy-setup.sh"
+          head -1 "$RUNNER_TEMP/legacy-setup.sh" | grep -q '^#!/usr/bin/env bash'
