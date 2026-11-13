@@ -517,12 +517,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # GitHub artifact attestations (build provenance) for every asset.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: collect assets and checksums.txt
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find artifacts -type f \( -name 'anyr-*' -o -name 'anyr.exe' \) ! -name '*.json' -exec cp -v {} dist/ \;
+          ( cd dist && sha256sum anyr-* > checksums.txt )
+          ls -la dist
+          ls -la dist/checksums.txt
+          test -s dist/checksums.txt || { echo "checksums.txt missing or empty"; exit 1; }
+          test -n "$(ls -A dist)" || { echo "no binaries in artifacts"; exit 1; }
+
+      # Verify with: gh attestation verify <file> -R AnyRouterHQ/cli
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/anyr-*
+            dist/checksums.txt
 
       - name: publish GitHub prerelease
         env:
@@ -531,13 +552,6 @@ jobs:
           set -euo pipefail
           VER="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
           TAG="v${VER}"
-          mkdir -p dist
-          find artifacts -type f \( -name 'anyr-*' -o -name 'anyr.exe' \) ! -name '*.json' -exec cp -v {} dist/ \;
-          ( cd dist && sha256sum anyr-* > checksums.txt )
-          ls -la dist
-          ls -la dist/checksums.txt
-          test -s dist/checksums.txt || { echo "checksums.txt missing or empty"; exit 1; }
-          test -n "$(ls -A dist)" || { echo "no binaries in artifacts"; exit 1; }
           SHORT="$(echo "${GITHUB_SHA}" | cut -c1-7)"
           printf 'Beta from main (%s).\n\ncurl -fsSL https://anyrouter.dev/cli.sh | bash -s -- --channel beta\nchannel: beta\n' "$SHORT" > notes.md
           gh release create "${TAG}" dist/* \

@@ -53,6 +53,13 @@ directory to your user `PATH`. `ANYR_CHANNEL=beta` or `ANYR_VERSION=<x.y.z>`
 pick another build. Windows on arm64 gets the x64 build, which runs under
 emulation.
 
+Every release asset and its `checksums.txt` carry a GitHub build provenance
+attestation. To check that a file was built by this repo's CI:
+
+```bash
+gh attestation verify anyr-linux-x86_64 -R AnyRouterHQ/cli
+```
+
 The same script is served from this repo, and `--channel beta` installs the
 prerelease that every push to `main` publishes:
 

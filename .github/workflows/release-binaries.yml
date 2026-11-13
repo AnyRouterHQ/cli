@@ -21,6 +21,10 @@ jobs:
   build:
     # release: only non-prerelease; workflow_dispatch: always (tag input)
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -132,6 +136,11 @@ jobs:
             --kind native \
             --out "bench/${{ matrix.asset }}.json"
 
+      # Verify with: gh attestation verify <file> -R AnyRouterHQ/cli
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ matrix.asset }}
+
       - name: upload ${{ matrix.asset }}
         shell: bash
         env:
@@ -164,6 +173,10 @@ jobs:
 
   wasm:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -197,6 +210,10 @@ jobs:
             --target wasm32-unknown-unknown \
             --kind wasm \
             --out bench/anyr.wasm.json
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: anyr.wasm
 
       - name: upload wasm assets
         shell: bash
@@ -232,6 +249,10 @@ jobs:
   checksums:
     if: ${{ always() && !cancelled() && (github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false) }}
     needs: [build, wasm]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -275,6 +296,10 @@ jobs:
             sleep $((n * 5))
             n=$((n + 1))
           done
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/checksums.txt
 
   notes:
     if: ${{ always() && !cancelled() && (github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false) }}
