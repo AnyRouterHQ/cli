@@ -63,8 +63,10 @@ fn serve(replies: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<String>) 
                 "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
-            stream.write_all(resp.as_bytes()).unwrap();
+            // Record the request before answering: once the client has its
+            // reply it may exit, and the test may read `seen` at once.
             tx.send(summary).unwrap();
+            stream.write_all(resp.as_bytes()).unwrap();
         }
     });
     (base, rx)
