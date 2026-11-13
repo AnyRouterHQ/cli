@@ -413,8 +413,8 @@ fn dispatch_noting(
 }
 
 /// The command a HUD action stands for, read from what it changed, so the
-/// user learns the scriptable form: a launch, an agent's model or account,
-/// the active account or the default model. Routing toggles have none.
+/// user learns the scriptable form: a launch, or an agent's model or
+/// account. Other actions print nothing.
 pub(crate) fn equivalent_command(
     action: &str,
     before: &crate::config::Config,
@@ -423,9 +423,6 @@ pub(crate) fn equivalent_command(
     let bin = crate::help::invoked_bin();
     if action.starts_with("Launch ") {
         return after.last_tool.as_ref().map(|t| format!("{bin} {t}"));
-    }
-    if after.active_profile != before.active_profile {
-        return Some(format!("{bin} auth switch {}", after.active_profile));
     }
     for (id, _) in crate::install::KNOWN_AGENTS {
         let (b, a) = (before.agent_binding(id), after.agent_binding(id));
@@ -455,15 +452,7 @@ pub(crate) fn equivalent_command(
             return Some(format!("{bin} agents unset {id}{unset}"));
         }
     }
-    let model = |c: &crate::config::Config| {
-        c.profiles
-            .get(&c.active_profile)
-            .and_then(|p| p.default_model.clone())
-    };
-    (model(before) != model(after))
-        .then(|| model(after))
-        .flatten()
-        .map(|m| format!("{bin} models use {m}"))
+    None
 }
 
 pub(crate) fn launcher_hud(
