@@ -167,7 +167,11 @@ fn agent_flag(parsed: &ParsedArgs) -> Result<Option<String>, String> {
 }
 
 /// Store `key` as `agent`'s own launch key. Returns the key it replaced.
-fn set_agent_key(cfg: &mut Config, agent: &str, key: &str) -> Result<Option<String>, String> {
+pub(crate) fn set_agent_key(
+    cfg: &mut Config,
+    agent: &str,
+    key: &str,
+) -> Result<Option<String>, String> {
     validate_api_key(key)?;
     Ok(cfg
         .agent_binding_mut(agent)

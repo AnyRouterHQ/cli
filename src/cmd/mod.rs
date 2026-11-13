@@ -1,6 +1,7 @@
 //! Per-command implementations. New commands land in their own file here.
 
 pub(crate) mod account;
+pub(crate) mod agents;
 pub(crate) mod auth;
 pub(crate) mod byok;
 pub(crate) mod catalog;

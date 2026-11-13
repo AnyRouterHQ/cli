@@ -198,6 +198,15 @@ fn run_inner(argv: Vec<String>, env: &BTreeMap<String, String>) -> i32 {
         }
     }
     let mut parsed = parsed.clone();
+    // `--key-stdin` on a sign-in is `--key -`: one line from stdin (clig.dev:
+    // no secrets in argv). `byok` keeps its own `--key-stdin` (a provider key).
+    if parsed.flag_true("key-stdin") && matches!(canonical, "login" | "setup" | "auth" | "account")
+    {
+        parsed.flags.remove("key-stdin");
+        parsed
+            .flags
+            .insert("key".into(), crate::parse::FlagValue::Value("-".into()));
+    }
     // Login handles `--key` itself (acquire_api_key); `auth login` is the same.
     let own_key_handling = matches!(canonical, "login" | "setup")
         || (canonical == "auth"
@@ -304,6 +313,7 @@ fn dispatch(
         "config" => run_config(parsed, env),
         "decision" => run_decision(parsed, env),
         "account" => run_account(parsed, env),
+        "agents" => crate::cmd::agents::run(parsed, env),
         "keys" => run_keys(parsed, env),
         "byok" => run_byok(parsed, env),
         "logs" => run_logs(parsed, env),

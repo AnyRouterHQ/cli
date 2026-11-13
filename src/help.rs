@@ -337,6 +337,8 @@ pub fn command_help(command: &str) -> Option<String> {
     };
     Some(match canonical {
         topic if is_page(topic) => page(&bin, topic),
+        // `agents` is the agent guide's page name (`help agents`).
+        "agents" => page(&bin, "agents_cmd"),
         "skills" => fill(
             &bin,
             "{bin} skills — not yet in the native CLI (coming later).\n",

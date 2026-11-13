@@ -21,6 +21,13 @@ pub fn subcommands(command: &str) -> &'static [(&'static str, &'static str)] {
             ("token", "Print the active API key"),
             ("switch", "Switch the active account"),
         ],
+        "agents" => &[
+            ("list", "Every agent: installed, model, account, key source"),
+            ("get", "One agent's settings"),
+            ("set", "Bind a model, account, key (stdin) or args"),
+            ("unset", "Clear a model, account, key or args"),
+            ("install", "Run the agent's installer"),
+        ],
         "account" => &[
             ("list", "List accounts"),
             ("use", "Switch the active account"),

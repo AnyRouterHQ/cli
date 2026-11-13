@@ -281,15 +281,14 @@ pub(crate) enum CmdKind {
 pub(crate) fn cmd_kind(command: &str) -> Option<CmdKind> {
     let c = canonical_command(command);
     Some(match c {
-        "setup" | "login" | "auth" | "menu" | "models" | "config" | "keys" | "whoami"
-        | "status" | "logout" | "account" | "usage" | "claude" | "codex" | "grok" | "opencode"
-        | "pool" | "pi" | "qwen" | "goose" | "aider" | "crush" | "kilo" | "fx" | "upgrade"
-        | "onboard" | "impl" | "plan" | "fix" | "deploy" | "cp" | "relay" | "decision"
-        | "commands" | "api" | "completion" | "byok" | "publish" | "apps" | "artifact" | "chat"
-        | "logs" | "transactions" | "credits" | "stats" | "embed" | "generation" | "presets"
-        | "mcp" | "eval" | "task" | "delegate" | "schema" | "telemetry" | "report" => {
-            CmdKind::Implemented
-        }
+        "setup" | "login" | "auth" | "agents" | "menu" | "models" | "config" | "keys"
+        | "whoami" | "status" | "logout" | "account" | "usage" | "claude" | "codex" | "grok"
+        | "opencode" | "pool" | "pi" | "qwen" | "goose" | "aider" | "crush" | "kilo" | "fx"
+        | "upgrade" | "onboard" | "impl" | "plan" | "fix" | "deploy" | "cp" | "relay"
+        | "decision" | "commands" | "api" | "completion" | "byok" | "publish" | "apps"
+        | "artifact" | "chat" | "logs" | "transactions" | "credits" | "stats" | "embed"
+        | "generation" | "presets" | "mcp" | "eval" | "task" | "delegate" | "schema"
+        | "telemetry" | "report" => CmdKind::Implemented,
         "cursor" | "cline" | "windsurf" => CmdKind::HelpOnly,
         "audit" | "skills" | "prompt" => CmdKind::Stub,
         _ => return None,
@@ -361,6 +360,7 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
         "Provider keys (BYOK); --donate shares one with the pool",
     ),
     ("artifact", "Publish a file or folder to a shareable URL"),
+    ("agents", "Per-agent model, account, key and args"),
     ("account", "Manage multiple accounts"),
     ("auth", "Authenticate with AnyRouter"),
     ("config", "Print current settings"),
@@ -446,6 +446,7 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
     Some(match canonical {
         "login" | "setup" => &[
             "key",
+            "key-stdin",
             "preset",
             "profile",
             "base-url",
@@ -489,6 +490,7 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
         ],
         "account" => &[
             "yes",
+            "key-stdin",
             "config",
             "profile",
             "key",
@@ -631,8 +633,20 @@ pub(crate) fn allowed_flags(command: &str) -> Option<&'static [&'static str]> {
         ],
         "audit" => &["profile", "config", "json", "launches", "tool", "limit"],
         "logout" => &["profile", "config", "json"],
+        "agents" => &[
+            "config",
+            "json",
+            "model",
+            "profile",
+            "key-stdin",
+            "args",
+            "key",
+            "all",
+            "yes",
+        ],
         "auth" => &[
             "key",
+            "key-stdin",
             "preset",
             "profile",
             "base-url",

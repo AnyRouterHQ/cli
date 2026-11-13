@@ -7,6 +7,7 @@ pub static VALUE_FLAGS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "effort",
         "preset",
         "key",
+        "args",
         "profile",
         "base-url",
         "config",
@@ -109,6 +110,19 @@ where
     };
 
     let launcher_owned = crate::cmd::dispatch::launch_flags(&command);
+    // `agents unset <id> --model` names a field to clear; it takes no value.
+    let verb = rest.iter().enumerate().find(|(i, a)| {
+        !a.starts_with("--")
+            && !(*i > 0
+                && rest[i - 1].starts_with("--")
+                && !rest[i - 1].contains('=')
+                && takes_value(&command, &rest[i - 1][2..]))
+    });
+    let value_cmd = if command == "agents" && verb.is_some_and(|(_, v)| v == "unset") {
+        "agents unset"
+    } else {
+        command.as_str()
+    };
     let mut flags = HashMap::new();
     let mut passthrough = Vec::new();
     let mut after_separator = false;
@@ -136,7 +150,7 @@ where
         if let Some(eq) = arg.find('=') {
             let eq_name = arg[2..eq].to_string();
             let eq_value = arg[eq + 1..].to_string();
-            if takes_value(&command, &eq_name) {
+            if takes_value(value_cmd, &eq_name) {
                 if eq_value.is_empty() {
                     return Err(format!("Flag --{eq_name} requires a value."));
                 }
@@ -151,7 +165,7 @@ where
             continue;
         }
         let name = arg[2..].to_string();
-        if takes_value(&command, &name) {
+        if takes_value(value_cmd, &name) {
             let next = rest.get(i + 1);
             if next.is_none()
                 || next == Some(&"--".to_string())
@@ -190,6 +204,7 @@ fn owns(owned: &[&str], arg: &str) -> bool {
 pub(crate) fn takes_value(command: &str, name: &str) -> bool {
     VALUE_FLAGS.contains(name)
         && !(matches!(command, "update" | "upgrade") && name == "status")
+        && !(command == "agents unset" && matches!(name, "model" | "profile" | "key" | "args"))
         && !(command == "report" && name == "file")
 }
 
@@ -226,7 +241,11 @@ fn parse_bool_flag(name: &str, raw: &str) -> Result<bool, String> {
     {
         return Ok(false);
     }
-    Err(format!("Flag --{name} does not take a value ({raw})."))
+    // The value may be a pasted key (`agents unset x --key=sk-…`).
+    Err(format!(
+        "Flag --{name} does not take a value ({}).",
+        crate::key::mask_secrets(raw)
+    ))
 }
 
 pub fn get_string_flag(flags: &HashMap<String, FlagValue>, name: &str) -> Option<String> {

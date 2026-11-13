@@ -1,0 +1,22 @@
+{bin} agents — each coding agent's model, account, key and args
+
+Usage:
+  {bin} agents list [--json]
+  {bin} agents get <agent> [--json]
+  {bin} agents set <agent> [--model M] [--profile P] [--key-stdin] [--args "..."]
+  {bin} agents unset <agent> [--model] [--profile] [--key] [--args] [--all]
+  {bin} agents install <agent> [--yes]
+
+Options:
+  --model <id>     Model this agent launches with (auto clears it)
+  --profile <name> Account this agent launches with
+  --key-stdin      Read this agent's own key from stdin (one line)
+  --args=<flags>   Flags passed to the agent on every launch
+                   (quote them: --args="--verbose --add-dir /srv")
+  --all            With unset: clear everything saved for the agent,
+                   routing switches included
+  --yes            With install: run the installer without asking
+
+Same settings as `{bin} config set launcher.<agent>.*` and `{bin} keys set --agent`.
+`set` with the values already saved changes nothing. No network.
+`--json` never shows a key; `key_source` is agent, profile, env or none.

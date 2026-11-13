@@ -61,6 +61,7 @@ pub fn group(canonical: &str) -> &'static str {
     match canonical {
         "login" | "logout" | "auth" | "whoami" | "account" => "auth",
         "chat" | "models" | "embed" | "eval" | "decision" | "task" | "delegate" => "chat",
+        "agents" => "launch",
         c if LAUNCHERS.contains(&c) => "launch",
         "relay" => "relay",
         "artifact" | "publish" | "apps" => "publish",
@@ -86,6 +87,7 @@ pub fn subcommands(canonical: &str) -> &'static [&'static str] {
     match canonical {
         "auth" => &["login", "logout", "status", "switch", "token"],
         "account" => &["list", "use", "add", "rename", "remove"],
+        "agents" => &["list", "get", "set", "unset", "install"],
         "models" => &["list", "show", "use"],
         "keys" => &[
             "list", "create", "set", "unset", "show", "update", "audit", "rotate", "revoke",
@@ -357,6 +359,18 @@ pub const SPECS: &[Spec] = &[
     write("account add", Auth::None, &["[name]"]),
     edit("account rename", &["<old>", "<new>"]),
     edit("account remove", &["<name>"]),
+    local("agents", &[]),
+    local("agents list", &[]),
+    local("agents get", &["<agent>"]),
+    edit("agents set", &["<agent>"]),
+    edit("agents unset", &["<agent>"]),
+    // Runs the agent's installer; off a terminal it needs `--yes`.
+    Spec {
+        network: true,
+        mutating: true,
+        confirms: true,
+        ..local("agents install", &["<agent>"])
+    },
     local("auth", &[]),
     write("auth login", Auth::None, &[]),
     edit("auth logout", &[]),
@@ -445,11 +459,12 @@ fn flag_env(flag: &str) -> Option<&'static str> {
     }
 }
 
-/// `{name, type, required, enum?, env?}` for one flag of `command`. Bool or
-/// value comes from the parser itself (`parse::takes_value`).
-fn typed_flag(command: &str, flag: &str) -> Value {
+/// `{name, type, required, enum?, env?}` for one flag of `command` on
+/// `path` (`agents unset` takes `--model` as a switch). Bool or value comes
+/// from the parser itself (`parse::takes_value`).
+fn typed_flag(command: &str, path: &str, flag: &str) -> Value {
     let choices = flag_enum(command, flag);
-    let kind = if !crate::parse::takes_value(command, flag) {
+    let kind = if !crate::parse::takes_value(path, flag) {
         "bool"
     } else if choices.is_some() {
         "enum"
@@ -462,7 +477,7 @@ fn typed_flag(command: &str, flag: &str) -> Value {
     if let Some(choices) = choices {
         f["enum"] = json!(choices);
     }
-    if let Some(env) = flag_env(flag) {
+    if let Some(env) = flag_env(flag).filter(|_| kind != "bool" || flag != "key") {
         f["env"] = json!(env);
     }
     f
@@ -532,7 +547,7 @@ fn schema_entry(command: &'static str, sub: Option<&'static str>) -> Value {
         "summary": summary,
         "aliases": if sub.is_none() { aliases(command) } else { Vec::new() },
         "subcommands": if sub.is_none() { subcommands(command) } else { &[] },
-        "flags": flags(command).iter().map(|f| typed_flag(command, f)).collect::<Vec<_>>(),
+        "flags": flags(command).iter().map(|f| typed_flag(command, &path, f)).collect::<Vec<_>>(),
         "args": s.args,
         "auth": auth_name(s.auth),
         "mutating": s.mutating,
@@ -559,7 +574,7 @@ pub fn schema(path: &[String]) -> Result<Value, String> {
         let global: Vec<Value> = GLOBAL_FLAGS
             .iter()
             .map(|(n, d)| {
-                let mut f = typed_flag("", n);
+                let mut f = typed_flag("", "", n);
                 f["summary"] = json!(d);
                 f
             })
@@ -791,7 +806,7 @@ mod tests {
                 );
                 assert_eq!(
                     kind == "bool",
-                    !crate::parse::takes_value(command, name),
+                    !crate::parse::takes_value(&path, name),
                     "{path} --{name}"
                 );
                 assert_eq!(kind == "enum", f["enum"].is_array(), "{path} --{name}");
