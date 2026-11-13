@@ -501,3 +501,23 @@ fn launcher_renders_plain_from_the_top_left_in_every_shell_and_width() {
         }
     }
 }
+
+#[test]
+fn a_launch_from_the_launcher_prints_its_command_on_exit() {
+    // WHY: every HUD action that launches or changes a setting ends with
+    // the command that does the same without the HUD, so a user learns it.
+    let sandbox = Sandbox::new(&server());
+    let shell = PathBuf::from("/bin/sh");
+    let cmd = sandbox.command(&shell, &script(""), &[("ANYR_NO_CATALOG", "1")]);
+    let mut pty = Pty::spawn(cmd, 80, ROWS);
+    pty.wait_for(&["claude", "quit"]);
+    // The first row launches claude; the fake claude exits at once.
+    pty.send(b"\r");
+    let screen = pty.wait_for(&["anyr claude"]);
+    assert!(
+        screen.contents().lines().any(|l| l.trim() == "anyr claude"),
+        "{}",
+        dump(&screen)
+    );
+    pty.finish();
+}

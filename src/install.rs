@@ -334,8 +334,11 @@ pub fn ensure_tool_installed(
             return Err(crate::exit::tag(
                 crate::exit::NOT_FOUND,
                 format!(
-                    "{} (\"{command}\") is not on PATH; install it with `{}` or pass --install",
-                    hint.label, hint.install
+                    "{} (\"{command}\") is not on PATH; install it with `{}` or pass --install: {bin} {id} --install (or {bin} agents install {id} --yes)",
+                    hint.label,
+                    hint.install,
+                    bin = crate::help::invoked_bin(),
+                    id = canonical_tool(tool_name),
                 ),
             ))
         }

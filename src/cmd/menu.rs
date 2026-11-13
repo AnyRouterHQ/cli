@@ -344,6 +344,15 @@ pub(crate) fn run_menu(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
         kick_credits_refresh(&cache, base, key);
     }
     let inline = !launcher_uses_palette(env);
+    // The scriptable form of the last action that changed something,
+    // printed once on the way out.
+    let mut equivalent: Option<String> = None;
+    let done = |code: i32, line: &Option<String>| {
+        if let Some(line) = line {
+            eprintln!("{}", term::dim(line));
+        }
+        Ok(code)
+    };
     loop {
         if inline {
             let (status, actions) = {
@@ -359,13 +368,13 @@ pub(crate) fn run_menu(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                 Some(0),
             ) {
                 Ok(i) => i,
-                Err(err) if err == "Cancelled." => return Ok(0),
+                Err(err) if err == "Cancelled." => return done(0, &equivalent),
                 Err(err) => return Err(err),
             };
             let action = actions[idx].1.clone();
-            match launcher_dispatch(&action, parsed, env, &path)? {
+            match dispatch_noting(&action, parsed, env, &path, &mut equivalent)? {
                 LauncherNext::Continue => {}
-                LauncherNext::Exit(code) => return Ok(code),
+                LauncherNext::Exit(code) => return done(code, &equivalent),
             }
             continue;
         }
@@ -375,15 +384,86 @@ pub(crate) fn run_menu(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
         };
         let idx = match pick_palette_action(header, entries.clone(), &cache) {
             Ok(Some(i)) => i,
-            Ok(None) => return Ok(0),
+            Ok(None) => return done(0, &equivalent),
             Err(err) => return Err(err),
         };
         let action = entries[idx].action.clone();
-        match launcher_dispatch(&action, parsed, env, &path)? {
+        match dispatch_noting(&action, parsed, env, &path, &mut equivalent)? {
             LauncherNext::Continue => {}
-            LauncherNext::Exit(code) => return Ok(code),
+            LauncherNext::Exit(code) => return done(code, &equivalent),
         }
     }
+}
+
+/// `launcher_dispatch`, noting the command the action stands for.
+fn dispatch_noting(
+    action: &str,
+    parsed: &ParsedArgs,
+    env: &BTreeMap<String, String>,
+    path: &Path,
+    equivalent: &mut Option<String>,
+) -> Result<LauncherNext, String> {
+    let before = load_config_if_present(path).unwrap_or_default();
+    let next = launcher_dispatch(action, parsed, env, path)?;
+    let after = load_config_if_present(path).unwrap_or_default();
+    if let Some(line) = equivalent_command(action, &before, &after) {
+        *equivalent = Some(line);
+    }
+    Ok(next)
+}
+
+/// The command a HUD action stands for, read from what it changed, so the
+/// user learns the scriptable form: a launch, an agent's model or account,
+/// the active account or the default model. Routing toggles have none.
+pub(crate) fn equivalent_command(
+    action: &str,
+    before: &crate::config::Config,
+    after: &crate::config::Config,
+) -> Option<String> {
+    let bin = crate::help::invoked_bin();
+    if action.starts_with("Launch ") {
+        return after.last_tool.as_ref().map(|t| format!("{bin} {t}"));
+    }
+    if after.active_profile != before.active_profile {
+        return Some(format!("{bin} auth switch {}", after.active_profile));
+    }
+    for (id, _) in crate::install::KNOWN_AGENTS {
+        let (b, a) = (before.agent_binding(id), after.agent_binding(id));
+        let (mut set, mut unset) = (String::new(), String::new());
+        for (flag, old, new) in [
+            (
+                "model",
+                b.and_then(|x| x.default_model.clone()),
+                a.and_then(|x| x.default_model.clone()),
+            ),
+            (
+                "profile",
+                b.and_then(|x| x.profile.clone()),
+                a.and_then(|x| x.profile.clone()),
+            ),
+        ] {
+            match new {
+                _ if old == new => {}
+                Some(v) => set.push_str(&format!(" --{flag} {v}")),
+                None => unset.push_str(&format!(" --{flag}")),
+            }
+        }
+        if !set.is_empty() {
+            return Some(format!("{bin} agents set {id}{set}"));
+        }
+        if !unset.is_empty() {
+            return Some(format!("{bin} agents unset {id}{unset}"));
+        }
+    }
+    let model = |c: &crate::config::Config| {
+        c.profiles
+            .get(&c.active_profile)
+            .and_then(|p| p.default_model.clone())
+    };
+    (model(before) != model(after))
+        .then(|| model(after))
+        .flatten()
+        .map(|m| format!("{bin} models use {m}"))
 }
 
 pub(crate) fn launcher_hud(
@@ -851,7 +931,35 @@ pub(crate) fn launch_agent_picker(
 
 #[cfg(test)]
 mod hud_tests {
-    use super::hud_launch_ids;
+    use super::{equivalent_command, hud_launch_ids};
+
+    #[test]
+    fn each_hud_change_names_its_scriptable_command() {
+        // WHY: the HUD teaches the scriptable form; a wrong line would teach
+        // a command that does something else.
+        let bin = crate::help::invoked_bin();
+        let before = crate::config::Config::default();
+        let mut after = before.clone();
+        after.agent_binding_mut("claude").default_model = Some("z-ai/glm-4.7".into());
+        assert_eq!(
+            equivalent_command("Switch model claude", &before, &after).as_deref(),
+            Some(format!("{bin} agents set claude --model z-ai/glm-4.7").as_str())
+        );
+        assert_eq!(
+            equivalent_command("Switch model claude", &after, &before).as_deref(),
+            Some(format!("{bin} agents unset claude --model").as_str())
+        );
+        let mut launched = before.clone();
+        launched.last_tool = Some("codex".into());
+        assert_eq!(
+            equivalent_command("Launch codex", &before, &launched).as_deref(),
+            Some(format!("{bin} codex").as_str())
+        );
+        assert_eq!(
+            equivalent_command("Toggle exacto claude", &before, &before),
+            None
+        );
+    }
 
     #[test]
     fn first_run_always_offers_launch_claude() {
