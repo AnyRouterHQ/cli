@@ -213,6 +213,14 @@ jobs:
           - os: ubuntu-24.04-arm
             asset: anyr-linux-arm64
             target: aarch64-unknown-linux-gnu
+          # Static builds for Alpine and for glibc older than the gnu builds
+          # need (setup.sh GLIBC_BASELINE).
+          - os: ubuntu-latest
+            asset: anyr-linux-x86_64-musl
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            asset: anyr-linux-arm64-musl
+            target: aarch64-unknown-linux-musl
           - os: macos-latest
             asset: anyr-darwin-arm64
             target: aarch64-apple-darwin
@@ -234,6 +242,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # ring compiles C for the target; musl-gcc is the musl C compiler.
+      - name: install musl-tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+
       # Keyed by target: both macOS legs share an OS and would collide.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -245,6 +258,9 @@ jobs:
         run: python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}"
 
       - name: cargo build --release
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: package + strip
@@ -269,6 +285,30 @@ jobs:
       - name: smoke the packaged binary
         shell: bash
         run: bash scripts/smoke.sh "${{ matrix.asset }}" ${{ runner.os != 'Windows' && '--mock' || '' }}
+
+      - name: run the musl build in Alpine
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          docker run --rm -v "$PWD:/w:ro" -w /w \
+            -e ANYR_NO_UPDATE=1 -e ANYR_TELEMETRY=0 -e ANYROUTER_HOME=/tmp/anyr \
+            alpine:latest sh -euc '
+              ./${{ matrix.asset }} --version
+              ./${{ matrix.asset }} --help >/dev/null
+              ./${{ matrix.asset }} schema | head -c 80; echo'
+
+      # setup.sh sends glibc older than GLIBC_BASELINE to the musl build, so
+      # the gnu build must not need a newer glibc than that.
+      - name: glibc floor is at most setup.sh GLIBC_BASELINE
+        if: endsWith(matrix.target, 'linux-gnu')
+        run: |
+          set -euo pipefail
+          need="$(objdump -T "${{ matrix.asset }}" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' | sort -uV | tail -n 1)"
+          have="$(sed -n 's/^GLIBC_BASELINE="\(.*\)"$/\1/p' setup.sh)"
+          echo "${{ matrix.asset }} needs glibc ${need}; setup.sh GLIBC_BASELINE=${have}"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | tail -n 1)" != "$have" ]; then
+            echo "raise GLIBC_BASELINE in setup.sh to ${need}"
+            exit 1
+          fi
 
       - name: bench size and startup
         shell: bash
@@ -510,18 +550,21 @@ jobs:
           set -euo pipefail
           WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
           case "$RUNNER_OS" in
-            Linux) ASSET=anyr-linux-x86_64 ;;
-            macOS) ASSET=anyr-darwin-arm64 ;;
+            Linux) FILES="anyr-linux-x86_64 anyr-linux-x86_64-musl checksums.txt" ;;
+            macOS) FILES="anyr-darwin-arm64 checksums.txt" ;;
           esac
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${WANT}"
+          served() {
+            for f in $FILES; do curl -fsIL -o /dev/null "${BASE}/${f}" || return 1; done
+          }
           for i in $(seq 0 36); do
-            if curl -fsIL -o /dev/null "${BASE}/${ASSET}" && curl -fsIL -o /dev/null "${BASE}/checksums.txt"; then
-              echo "v${WANT}: ${ASSET} and checksums.txt are served after $((i * 5))s"
+            if served; then
+              echo "v${WANT}: ${FILES} are served after $((i * 5))s"
               exit 0
             fi
             sleep 5
           done
-          echo "v${WANT}: ${ASSET} or checksums.txt still not served after 3 minutes"
+          echo "v${WANT}: one of ${FILES} is still not served after 3 minutes"
           exit 1
 
       - name: install the beta with setup.sh and check the version
@@ -538,6 +581,21 @@ jobs:
             echo "run ${run}: want ${WANT}, got ${GOT}"
             case "$GOT" in "${WANT}"*) ;; *) echo "installed version is not the one just published"; exit 1;; esac
           done
+
+      - name: install the beta on Alpine and check it picked the musl build
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          WANT="$(python3 scripts/stamp_beta_version.py --run "${{ github.run_number }}" --print)"
+          docker run --rm -v "$PWD:/src:ro" -e WANT="$WANT" \
+            -e ANYR_NO_UPDATE=1 -e ANYR_TELEMETRY=0 alpine:latest sh -euc '
+              set -o pipefail
+              apk add --no-cache -q bash curl
+              ANYR_BIN_DIR=/opt/anyr bash /src/setup.sh --version "$WANT" 2>&1 | tee /tmp/setup.log
+              grep -q "anyr-linux-x86_64-musl" /tmp/setup.log
+              GOT="$(/opt/anyr/anyr --version)"
+              echo "alpine: want $WANT, got $GOT"
+              case "$GOT" in "$WANT"*) ;; *) exit 1 ;; esac'
 
       # The release listing anyr reads lags the release by up to a few
       # minutes (it once still showed the previous beta), so retry until it

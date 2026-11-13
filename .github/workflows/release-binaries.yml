@@ -31,6 +31,13 @@ jobs:
           - os: ubuntu-24.04-arm
             asset: anyr-linux-arm64
             target: aarch64-unknown-linux-gnu
+          # Static builds for Alpine and old glibc (setup.sh GLIBC_BASELINE).
+          - os: ubuntu-latest
+            asset: anyr-linux-x86_64-musl
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            asset: anyr-linux-arm64-musl
+            target: aarch64-unknown-linux-musl
           # Cross-compile Intel Mac from Apple Silicon — macos-13 is unavailable
           # and was leaving release-binaries queued forever (empty stable assets).
           - os: macos-latest
@@ -58,7 +65,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      # ring compiles C for the target; musl-gcc is the musl C compiler.
+      - name: install musl-tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+
       - name: cargo build --release
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: package asset
