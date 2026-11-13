@@ -17,6 +17,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Pushes that only touch docs, plans, README or skills still run lint but
+  # build nothing and cut no beta. A manual dispatch (the release-please PR
+  # gate, #157) and any compare failure count as a product change.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      product: ${{ steps.diff.outputs.product }}
+    steps:
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          product=true
+          if [ "$EVENT" != workflow_dispatch ] && [ -n "${BASE//0/}" ]; then
+            if files="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE}...${HEAD}" --paginate -q '.files[].filename')"; then
+              printf '%s\n' "$files"
+              printf '%s\n' "$files" | grep -qE '^(src/|scripts/|tests/|\.github/workflows/|Cargo\.toml$|Cargo\.lock$|build\.rs$|setup\.sh$|install\.ps1$)' \
+                || product=false
+            else
+              echo "compare ${BASE}...${HEAD} failed; treating it as a product change"
+            fi
+          fi
+          echo "product=${product}"
+          echo "product=${product}" >> "$GITHUB_OUTPUT"
+
   lint:
     name: lint
     runs-on: ubuntu-latest
@@ -61,8 +90,12 @@ jobs:
       - name: stamp beta version script
         run: python tests/stamp_beta_version_test.py
 
+  # Reruns the whole suite under llvm-cov, so it reports coverage but does
+  # not gate the beta; the plain linux x86_64 test leg does.
   coverage:
     name: coverage
+    needs: changes
+    if: needs.changes.outputs.product == 'true'
     runs-on: ubuntu-latest
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -113,12 +146,16 @@ jobs:
           path: lcov.info
 
   # Tests and release builds run as separate jobs so neither waits on the
-  # other. Linux x86_64 tests run in the coverage job.
+  # other.
   test:
+    needs: changes
+    if: needs.changes.outputs.product == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           # Also covers darwin-x86_64: that binary is cross-compiled on this
@@ -164,6 +201,8 @@ jobs:
         run: cargo nextest run --locked --all-targets
 
   build:
+    needs: changes
+    if: needs.changes.outputs.product == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -250,6 +289,8 @@ jobs:
             bench/${{ matrix.asset }}.json
 
   wasm:
+    needs: changes
+    if: needs.changes.outputs.product == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -298,11 +339,12 @@ jobs:
   # private artifact publish + delete. Runs on main, on release-please PRs and
   # on manual dispatch; skipped on other PRs (forks have no secret).
   live-e2e:
-    needs: lint
+    needs: [lint, changes]
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.head_ref, 'release-please--'))
+      needs.changes.outputs.product == 'true' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-please--')))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -404,9 +446,11 @@ jobs:
             }
 
   beta:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.product == 'true'
     # build no longer waits on lint or tests, so gate the publish on all of them.
-    needs: [lint, coverage, test, build]
+    needs: [changes, lint, test, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
