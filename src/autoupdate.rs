@@ -556,7 +556,14 @@ pub fn keep_if_healthy(dest: &Path, version: &str, state: &mut UpdateState) -> R
     let old = sibling(dest, "old");
     if old.is_file() {
         clear_slot(&prev);
-        let _ = fs::rename(&old, &prev);
+        if let Err(e) = fs::rename(&old, &prev) {
+            return Err(format!(
+                "anyr {version} did not start, and the previous build could not be restored ({e}); \
+rename {} to {} to get it back",
+                old.display(),
+                dest.display()
+            ));
+        }
     }
     match rollback(dest) {
         Ok(()) => {
