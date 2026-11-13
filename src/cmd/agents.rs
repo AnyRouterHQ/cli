@@ -30,28 +30,7 @@ pub(crate) fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result
         if parsed.flag_true("json") {
             crate::cmd::view::print_json(&Value::Array(rows));
         } else {
-            let cell = |v: &Value| crate::cmd::view::text(Some(v));
-            let table: Vec<Vec<String>> = rows
-                .iter()
-                .map(|r| {
-                    let installed = if r["installed"] == true { "yes" } else { "no" };
-                    [
-                        cell(&r["id"]),
-                        installed.into(),
-                        cell(&r["model"]),
-                        cell(&r["profile"]),
-                        cell(&r["key_source"]),
-                        r["args"].as_array().map_or(String::new(), |a| {
-                            a.iter().map(cell).collect::<Vec<_>>().join(" ")
-                        }),
-                    ]
-                    .into()
-                })
-                .collect();
-            crate::cmd::view::print_table(
-                &["agent", "installed", "model", "profile", "key", "args"],
-                &table,
-            );
+            rows.iter().for_each(print_line);
         }
         return Ok(0);
     }
@@ -144,30 +123,30 @@ fn show(
         crate::cmd::view::print_json(&r);
         return Ok(0);
     }
-    for field in [
-        "id",
-        "name",
-        "installed",
-        "path",
-        "version",
-        "model",
-        "profile",
-        "key_source",
-        "args",
-    ] {
-        let v = &r[field];
-        let text = match v {
-            Value::Array(a) => a
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(" "),
-            Value::Null => "-".into(),
-            other => crate::cmd::view::text(Some(other)),
-        };
-        println!("{}  {text}", term::dim(&format!("{field:<10}")));
-    }
+    print_line(&r);
     Ok(0)
+}
+
+/// One agent on one line: id, installed or not, then what is saved.
+fn print_line(r: &Value) {
+    let mut line = format!(
+        "{:<9}{}",
+        r["id"].as_str().unwrap_or_default(),
+        if r["installed"] == true {
+            "installed"
+        } else {
+            "missing"
+        }
+    );
+    for k in ["model", "profile", "key_source", "path"] {
+        if let Some(v) = r[k].as_str() {
+            line += &format!("  {k} {v}");
+        }
+    }
+    for a in r["args"].as_array().into_iter().flatten() {
+        line += &format!(" {}", a.as_str().unwrap_or_default());
+    }
+    println!("{line}");
 }
 
 /// Write only when something changed, so a repeat leaves the file as it was.
@@ -180,7 +159,8 @@ fn save(
     cfg: &mut Config,
 ) -> Result<i32, String> {
     cfg.prune_empty_agents();
-    if cfg != before {
+    // The canonical text, not a derived `==`: the same answer, less code.
+    if crate::config::serialize_config(cfg) != crate::config::serialize_config(before) {
         write_config(cfg, path)?;
     }
     show(parsed, path, id, env)
@@ -213,18 +193,11 @@ fn set(
     let mut cfg = before.clone();
     if let Some(p) = &profile {
         if !cfg.profiles.contains_key(p) {
-            let names: Vec<&str> = cfg.profiles.keys().map(String::as_str).collect();
             return Err(crate::exit::tag(
                 crate::exit::NOT_FOUND,
-                format!(
-                    "Account \"{p}\" was not found.\n{} accounts: {}",
-                    term::dim("hint:"),
-                    if names.is_empty() {
-                        crate::help::with_bin("none; run {bin} login")
-                    } else {
-                        names.join(", ")
-                    }
-                ),
+                crate::help::with_bin(&format!(
+                    "Account \"{p}\" was not found.\nhint: {{bin}} auth list"
+                )),
             ));
         }
         cfg.agent_binding_mut(id).profile = Some(p.clone());
