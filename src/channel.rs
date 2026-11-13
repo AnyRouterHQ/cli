@@ -198,8 +198,23 @@ pub fn current_arch() -> &'static str {
     }
 }
 
+/// Release asset for this build. A static musl build updates to the musl
+/// asset, never to the glibc one it may not be able to run.
 pub fn asset_name(os: &str, arch: &str) -> String {
-    format!("anyr-{os}-{arch}")
+    asset_name_for(os, arch, cfg!(target_env = "musl"))
+}
+
+/// `anyr-{os}-{arch}`, plus `-musl` for the static Linux build.
+pub fn asset_name_for(os: &str, arch: &str, musl: bool) -> String {
+    if musl && os == "linux" {
+        format!("anyr-{os}-{arch}-musl")
+    } else {
+        format!("anyr-{os}-{arch}")
+    }
+}
+
+fn is_musl_asset(asset: &str) -> bool {
+    asset.ends_with("-musl")
 }
 
 pub fn parse_releases(json: &str) -> Result<Vec<Release>, String> {
@@ -303,7 +318,9 @@ pub fn channel_update_candidates(
         .filter(|rel| rel.assets.iter().any(|a| a.name == asset))
         .filter_map(|rel| parse_version(&rel.tag_name).map(|v| (v, rel.clone())))
         .collect();
-    if named.is_empty() {
+    // The any-assets fallback covers listings without asset names. A musl
+    // build skips it: a release without the musl asset only has glibc ones.
+    if named.is_empty() && !is_musl_asset(asset) {
         named = releases
             .iter()
             .filter(|rel| channel_matches(rel, channel))
@@ -327,6 +344,12 @@ pub fn select_latest_release_with_asset(
         .into_iter()
         .next()
         .ok_or_else(|| match channel {
+            _ if is_musl_asset(asset) => format!(
+                "No {} release has {asset} yet; older releases ship glibc builds only. \
+Keep this build, or install the glibc one with ANYR_LIBC=gnu and \
+curl -fsSL https://anyrouter.dev/cli.sh | bash",
+                channel.as_str()
+            ),
             Channel::Stable => format!(
                 "No stable GitHub release has {asset} (latest non-prerelease may be empty). \
 Try `anyr update --beta`."
@@ -702,6 +725,48 @@ mod tests {
         let beta =
             select_latest_release_with_asset(&rels, Channel::Beta, "anyr-linux-x86_64").unwrap();
         assert_eq!(beta.tag_name, "v0.1.12-beta.98");
+    }
+
+    #[test]
+    fn musl_assets_only_on_linux_and_match_the_running_build() {
+        assert_eq!(
+            asset_name_for("linux", "x86_64", true),
+            "anyr-linux-x86_64-musl"
+        );
+        assert_eq!(
+            asset_name_for("linux", "arm64", true),
+            "anyr-linux-arm64-musl"
+        );
+        assert_eq!(asset_name_for("linux", "arm64", false), "anyr-linux-arm64");
+        assert_eq!(asset_name_for("darwin", "arm64", true), "anyr-darwin-arm64");
+        // WHY: the updater must fetch the variant it is, or a musl install on
+        // Alpine would update itself to a glibc binary that cannot start.
+        assert_eq!(
+            asset_name("linux", "x86_64").ends_with("-musl"),
+            cfg!(target_env = "musl")
+        );
+    }
+
+    #[test]
+    fn musl_build_never_falls_back_to_glibc_only_releases() {
+        // WHY: releases before the musl build list only glibc assets; the
+        // any-assets fallback would pick them and install a binary that
+        // cannot run on a musl system.
+        let json = r#"[
+          {"tag_name":"v0.1.44","prerelease":false,"assets":[{"name":"anyr-linux-x86_64","browser_download_url":"https://github.com/AnyRouterHQ/cli/releases/download/v0.1.44/anyr-linux-x86_64"}]}
+        ]"#;
+        let rels = parse_releases(json).unwrap();
+        let musl = "anyr-linux-x86_64-musl";
+        for channel in [Channel::Stable, Channel::Beta] {
+            assert!(channel_update_candidates(&rels, channel, musl).is_empty());
+            let err = select_latest_release_with_asset(&rels, channel, musl).unwrap_err();
+            assert!(err.contains(musl) && err.contains("glibc"), "{err}");
+        }
+        assert_eq!(
+            channel_update_candidates(&rels, Channel::Stable, "anyr-linux-arm64").len(),
+            1,
+            "glibc builds keep the any-assets fallback"
+        );
     }
 
     #[test]
