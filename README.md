@@ -158,7 +158,7 @@ for one command.
 |-------|----------|
 | Sign in | `login`, `logout`, `whoami`, `account`, `auth` |
 | Chat and models | `chat`, `models`, `embed`, `eval`, `task`, `delegate`, `decision` |
-| Launch | `claude`, `codex`, `grok`, `opencode`, `pi`, `pool`, and more ([Launchers](#launchers)) |
+| Launch | `claude`, `codex`, `grok`, `opencode`, `pi`, `pool`, and more ([Launchers](#launchers)); `agents` |
 | Relay | `relay` |
 | Publish | `publish`, `apps`, `artifact` |
 | Account | `api`, `credits`, `stats`, `usage`, `logs`, `generation`, `presets`, `mcp`, `transactions`, `keys`, `byok` |
@@ -179,6 +179,49 @@ anyr help agents                         # the guide, from docs/agents.md
 
 Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 auth, 5 rate limited,
 6 needs --yes, 7 network, 8 payment required.
+
+### Launch without a terminal
+
+Every launcher screen has a flag or a command, so a script or an agent can do
+what the HUD does. This is the walk `tests/launcher_noninteractive.rs` runs:
+
+```bash
+printf '%s\n' "$ANYROUTER_KEY" | anyr login --key-stdin   # the key never goes in argv
+anyr agents set claude --model z-ai/glm-4.7 --profile default
+anyr claude --dry-run --json      # the plan: model, masked key, argv, redacted env
+anyr agents list --json           # one row per agent
+anyr claude                       # agent missing: exit 3, names `anyr claude --install`
+anyr                              # no TTY: prints help, exit 0, never prompts
+```
+
+On a terminal, the HUD prints the same command when you leave it (for
+example `anyr agents set claude --model z-ai/glm-4.7` or `anyr claude`).
+
+`anyr agents` reads and writes the same `agents.<id>.*` fields as
+`anyr config set launcher.<agent>.*` and `anyr keys set --agent`:
+
+| Command | What it does |
+|---------|--------------|
+| `agents list [--json]` | Each agent: `installed`, `path`, `version` (when a launch already probed it), bound `model` and `profile`, `key_source` (`agent`, `profile`, `env` or `none`), `args`, `last`. No network; never a key |
+| `agents get <agent> [--json]` | One row |
+| `agents set <agent> [--model M] [--profile P] [--key-stdin] [--args="..."]` | Binds them. The same values again change nothing, not even the file's bytes |
+| `agents unset <agent> [--model] [--profile] [--key] [--args] [--all]` | Clears them |
+| `agents install <agent> [--yes]` | Runs the agent's installer; off a terminal it needs `--yes` (exit 6) |
+
+An unknown agent or account exits 3, with the valid choices as the hint.
+
+`auth` is the whole account noun: `auth list|add|rename|remove` run the same
+code as `account`, and `auth status --local [--json]` lists every saved
+account from `config.yaml` without a network call (name, active, masked key,
+`key_source`, `has_management_key`, `default_model`; exit 0 unless the file
+cannot be read). Plain `auth status --json` keeps its fields and adds the same
+`profiles` array. `--key-stdin` works on `login`, `auth login` and
+`account add`.
+
+`anyr schema [command [sub]]` lists, per path: typed `flags`, `args`, `auth`
+(`none|sk|ak`), `mutating`, `idempotent`, `exits`, and `output`, a JSON
+Schema for the `--json` stdout where anyr builds it, or
+`"output_passthrough": true` where the JSON is the API's own body.
 
 ## Command reference
 

@@ -8,6 +8,8 @@ Accounts and config let a user see which profile is active, switch between saved
 - `config-path` prints the config file path.
 - `account-use` switches `active_profile` to a named account.
 - `logout` clears the stored key for the active account without printing it.
+- `auth-status-local` lists every saved account from the config file with no network: `anyr auth status --local --json` gives `{active, profiles:[{name, active, key_masked, key_source, has_management_key, default_model}]}`, exit 0 unless the file cannot be read. Plain `auth status --json` keeps its fields and adds the same `profiles` array.
+- `auth` verbs `list|add|rename|remove` run the same code as `account`.
 
 ## How to get to it (user POV)
 
@@ -32,6 +34,7 @@ Preconditions:
 - **Confirm file.** Copy `$(control-anyr path CONFIG_FILE)` to `artifacts/accounts-and-config/config-after-use.yaml`. The file has `active_profile: work` (or equivalent).
 - **Restore default.** Run `control-anyr cli -- account use default`. Follow with `whoami` showing `default`.
 - **Logout (optional last).** Only if no later recipe needs the seed key: `control-anyr cli --out artifacts/accounts-and-config/logout.txt -- logout`. Combined output does not contain `sk-ar-v1-verify-fixture-not-a-real-key`. Relogin is not required for help/onboard/dry-run-with-`--key`.
+- **Local status.** Run `control-anyr cli --out artifacts/accounts-and-config/status-local.json -- auth status --local --json`. Exit `0`. Two rows, `default` and `work`; no full fixture key in the file.
 - **Proof.** Keep `whoami.txt`, `account-use.txt`, `whoami-work.txt`, and `config-after-use.yaml`. They show the same switch from the command output and from the file.
 
 ## Gotchas

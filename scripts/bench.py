@@ -17,6 +17,10 @@ from pathlib import Path
 # 3,650,216 bytes at v0.1.44-beta.901 (after phase 4); 3,518,400 at
 # v0.1.44-beta.902 (packed help text, one shared sort). Budget: the CI size
 # the latest cut predicts (local delta applied) plus 2%.
+# 3,561,208 at 8c478bb (CLI v2 phase 2b, from 3,535,632: +25,576): the
+# `agents` noun +21.1 KB, HUD command line and launcher parity +2.4 KB,
+# `auth` noun and --local less a 3 KB agents trim +0.2 KB, schema
+# idempotent and packed output schemas +1.9 KB. Budget unchanged.
 LINUX_X86_64_BUDGET_BYTES = 3_579_931
 BUDGET_ASSET = "anyr-linux-x86_64"
 # Median wall time each local command must stay under on the budget asset.

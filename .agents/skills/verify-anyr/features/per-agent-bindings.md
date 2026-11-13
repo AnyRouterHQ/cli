@@ -13,6 +13,7 @@ CONFIGURE `model…` / `account…` / `key…` bind the **current coding agent**
 
 - TUI: `anyr` / `anyr menu`. Set the current agent with `agent…` or by launching one, then `model…` / `account…` / `key…` (same pickers as before — no extra screens).
 - CLI: `anyr account use work --agent claude`, `anyr models use stealth/ox-alpha --agent claude`.
+- CLI, one noun: `anyr agents set claude --model stealth/ox-alpha --profile work`, `anyr agents get claude --json`, `anyr agents list --json`, `anyr agents unset claude --model`. Same `agents.<id>.*` fields; a repeat `set` leaves `config.yaml` byte for byte.
 - Launch: `anyr claude --dry-run --yes` / `anyr grok --dry-run --yes` (always `--dry-run` here).
 
 ## Driving it with control-anyr

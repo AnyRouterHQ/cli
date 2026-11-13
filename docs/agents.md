@@ -6,7 +6,9 @@ Discover
   anyr commands --json          Every command with its flags, subcommands,
                                 aliases and whether it has JSON output
   anyr schema [command [sub]]   Typed map (anyr.schema/v2): flag types, args,
-                                auth (none|sk|ak), mutating, exit codes
+                                auth (none|sk|ak), mutating, idempotent, exit
+                                codes, and output: a JSON Schema of the --json
+                                stdout (output_passthrough: the API's body)
   anyr <command> --help         The full text for one command
 
 Output
@@ -77,6 +79,14 @@ Account
 Publish
   anyr artifact publish page.html --json      A page or folder to a URL
   anyr publish <app> doc.json                 A JSON document to an app
+
+Agents and accounts, no TTY
+  printf '%s\n' "$KEY" | anyr login --key-stdin
+  anyr agents set claude --model <id> --profile <name>   (--key-stdin, --args=)
+  anyr agents list --json       installed, path, model, profile, key_source
+  anyr agents unset claude --model     anyr agents install claude --yes
+  anyr auth status --local --json      Every saved account, no network
+  A missing agent exits 3 and names the rerun (anyr claude --install)
 
 Launch a coding agent with an AnyRouter key
   anyr claude --dry-run         Print the command and env, launch nothing
