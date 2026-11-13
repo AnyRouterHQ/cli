@@ -35,7 +35,11 @@ curl -fsSL https://anyrouter.dev/cli.sh | bash
 The installer downloads `anyr-<os>-<arch>` from
 [GitHub Releases](https://github.com/AnyRouterHQ/cli/releases) into
 `~/.local/bin`. Add that directory to `PATH` if the installer says so. CI builds
-linux x86_64/arm64, macOS x86_64/arm64, Windows x86_64 and wasm32.
+linux x86_64/arm64 (glibc and static musl), macOS x86_64/arm64, Windows x86_64
+and wasm32. On Alpine, on other musl systems and on glibc older than 2.39 the
+installer picks the static `anyr-<os>-<arch>-musl` build, and `anyr update`
+keeps a musl install on musl. `ANYR_LIBC=musl` or `ANYR_LIBC=gnu` overrides the
+choice.
 
 The same script is served from this repo, and `--channel beta` installs the
 prerelease that every push to `main` publishes:

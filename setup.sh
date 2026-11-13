@@ -31,6 +31,10 @@ BIN_DIR="${ANYR_BIN_DIR:-${HOME}/.local/bin}"
 CHANNEL="${ANYR_CHANNEL:-stable}"
 VERSION="${ANYR_VERSION:-}"
 CURL="${ANYR_CURL:-curl}"
+# Newest GLIBC_ symbol version the glibc (gnu) Linux build needs, from
+# `objdump -T anyr-linux-x86_64`. Older glibc gets the static musl build.
+# ci.yml checks every gnu build against this number.
+GLIBC_BASELINE="2.39"
 # When set, anyr writes `telemetry_endpoint: <url>` to the active config after
 # install, so the installed binary sends OTLP telemetry to your own collector
 # instead of PostHog.
@@ -59,6 +63,8 @@ Env:
   ANYR_CHANNEL     stable (default) | beta
   ANYR_VERSION     install this tag (v prefix optional)
   ANYR_BIN_DIR     install directory (default: ~/.local/bin)
+  ANYR_LIBC        musl | gnu (Linux only). Default: musl on Alpine, on any
+                   musl system and on glibc older than ${GLIBC_BASELINE}; gnu otherwise
   ANYR_TELEMETRY_OTLP_ENDPOINT   send telemetry to your own
                     OpenTelemetry collector over OTLP/HTTP (e.g. http://localhost:4318)
                     instead of PostHog. Written to the anyr config file.
@@ -66,7 +72,8 @@ Env:
   GH_TOKEN / GITHUB_TOKEN   optional; authenticated api.github.com (avoids 403)
   ANYR_CURL        curl binary (tests)
 
-Assets: anyr-linux-x86_64 anyr-linux-arm64 anyr-darwin-x86_64 anyr-darwin-arm64 anyr-windows-x86_64.exe
+Assets: anyr-linux-x86_64 anyr-linux-arm64 anyr-linux-x86_64-musl anyr-linux-arm64-musl
+        anyr-darwin-x86_64 anyr-darwin-arm64 anyr-windows-x86_64.exe
 EOF
 }
 
@@ -157,6 +164,45 @@ detect_arch() {
     arm64 | aarch64) printf 'arm64' ;;
     *) die "unsupported arch: $(uname -m) (need x86_64 or arm64)" ;;
   esac
+}
+
+# `a` < `b` for MAJOR.MINOR versions.
+version_lt() {
+  local a1="${1%%.*}" a2="${1#*.}" b1="${2%%.*}" b2="${2#*.}"
+  a2="${a2%%.*}" b2="${b2%%.*}"
+  [ "$a1" -lt "$b1" ] || { [ "$a1" -eq "$b1" ] && [ "$a2" -lt "$b2" ]; }
+}
+
+# Sets LIBC (gnu or musl) and LIBC_WHY for a Linux install. The glibc build
+# needs glibc ${GLIBC_BASELINE}; musl systems (Alpine) and older glibc get the
+# static musl build. ANYR_TEST_ROOT is a test hook for /etc/alpine-release.
+detect_libc() {
+  LIBC=gnu LIBC_WHY=""
+  case "${ANYR_LIBC:-}" in
+    musl | gnu)
+      LIBC="$ANYR_LIBC" LIBC_WHY="ANYR_LIBC=${ANYR_LIBC}"
+      return
+      ;;
+    "") ;;
+    *) die "ANYR_LIBC must be musl or gnu, not \"${ANYR_LIBC}\"" ;;
+  esac
+  if [ -e "${ANYR_TEST_ROOT:-}/etc/alpine-release" ]; then
+    LIBC=musl LIBC_WHY="Alpine"
+    return
+  fi
+  # musl's ldd prints its banner on stderr and exits 1.
+  local out ver
+  out="$(ldd --version 2>&1 || true)"
+  case "$out" in
+    *musl*)
+      LIBC=musl LIBC_WHY="musl libc"
+      return
+      ;;
+  esac
+  ver="$(printf '%s\n' "$out" | head -n 1 | grep -oE '[0-9]+\.[0-9]+' | tail -n 1 || true)"
+  if [ -n "$ver" ] && version_lt "$ver" "$GLIBC_BASELINE"; then
+    LIBC=musl LIBC_WHY="glibc ${ver} is older than ${GLIBC_BASELINE}"
+  fi
 }
 
 write_otlp_telemetry_endpoint() {
@@ -289,6 +335,11 @@ os="$(detect_os)"
 arch="$(detect_arch)"
 asset="anyr-${os}-${arch}"
 [ "$os" = windows ] && asset="${asset}.exe"
+LIBC="" LIBC_WHY=""
+if [ "$os" = linux ]; then
+  detect_libc
+  [ "$LIBC" = musl ] && asset="${asset}-musl"
+fi
 
 github_token() {
   if [ -n "${GH_TOKEN:-}" ]; then
@@ -496,7 +547,8 @@ resolve_download_url() {
 
 header
 [ -z "$AS_USER" ] || note "sudo is not needed. Installing for ${AS_USER}."
-step "Detected" "${os}/${arch} ${C_DIM}·${C_OFF} ${CHANNEL} channel"
+step "Detected" "${os}/${arch}${LIBC:+ ${LIBC}} ${C_DIM}·${C_OFF} ${CHANNEL} channel"
+[ -z "$LIBC_WHY" ] || note "${LIBC} build: ${LIBC_WHY}"
 working "Finding the release"
 url="$(resolve_download_url)"
 done_working
@@ -507,6 +559,8 @@ tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 working "Downloading ${asset}"
 if ! curl_ua -fsSL "$url" -o "$tmp"; then
+  [ "$LIBC" != musl ] || die "download failed: $url
+    Releases before the musl build ship glibc binaries only. ANYR_LIBC=gnu installs the glibc build."
   die "download failed: $url"
 fi
 done_working

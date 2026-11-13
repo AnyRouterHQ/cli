@@ -25,6 +25,9 @@ fi
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
+# The cases below expect the glibc asset whatever this host's libc is; the
+# libc cases at the end unset this.
+export ANYR_LIBC=gnu
 
 fake="${tmpdir}/fake-anyr"
 cat >"$fake" <<'EOF'
@@ -205,5 +208,72 @@ for mode in good bad missing noentry; do
     }
   fi
 done
+
+# --- libc: which Linux asset is picked (stubbed uname and ldd) ---
+# The checksum entry names only the expected asset, so a wrong pick aborts.
+stubs="${tmpdir}/stubs"
+mkdir -p "$stubs" "${tmpdir}/alpine/etc"
+: >"${tmpdir}/alpine/etc/alpine-release"
+cat >"${stubs}/uname" <<'EOF'
+#!/bin/sh
+case "$1" in -m) echo "${FAKE_UNAME_M:-x86_64}" ;; *) echo "${FAKE_UNAME_S:-Linux}" ;; esac
+EOF
+# musl's ldd prints its banner on stderr and exits 1.
+cat >"${stubs}/ldd" <<'EOF'
+#!/bin/sh
+case "$FAKE_LDD" in
+  musl) printf 'musl libc (x86_64)\nVersion 1.2.5\n' >&2; exit 1 ;;
+  none) exit 127 ;;
+  *) printf 'ldd (GNU libc) %s\nCopyright (C) 2024\n' "$FAKE_LDD" ;;
+esac
+EOF
+chmod +x "${stubs}/uname" "${stubs}/ldd"
+
+# <name> <expected asset suffix> <env...>
+libc_case() {
+  local name="$1" want="$2" d="${tmpdir}/bin-libc-$1" log="${tmpdir}/libc-$1.log"
+  shift 2
+  mkdir -p "$d"
+  : >"${tmpdir}/curl.log"
+  if ! env -u GH_TOKEN -u GITHUB_TOKEN -u ANYR_LIBC PATH="${stubs}:${PATH}" \
+    FAKE_CURL_LOG="${tmpdir}/curl.log" FAKE_CURL_ASSET="$want" \
+    ANYR_CURL="$FAKE_CURL" ANYR_VERSION=0.1.20 ANYR_BIN_DIR="$d" "$@" \
+    bash "$SETUP" >"$log" 2>&1; then
+    echo "libc case ${name}: install failed, want anyr-${want}:" >&2
+    cat "$log" "${tmpdir}/curl.log" >&2
+    exit 1
+  fi
+  grep -q "/v0.1.20/anyr-${want} " "${tmpdir}/curl.log" || grep -q "/v0.1.20/anyr-${want}\$" "${tmpdir}/curl.log" || {
+    echo "libc case ${name}: did not download anyr-${want}:" >&2
+    cat "${tmpdir}/curl.log" >&2
+    exit 1
+  }
+}
+libc_case new-glibc linux-x86_64 FAKE_LDD=2.39
+libc_case newer-glibc linux-x86_64 FAKE_LDD=2.41
+libc_case old-glibc linux-x86_64-musl FAKE_LDD=2.35
+grep -q 'glibc 2.35 is older than' "${tmpdir}/libc-old-glibc.log"
+libc_case musl-ldd linux-x86_64-musl FAKE_LDD=musl
+libc_case alpine linux-x86_64-musl FAKE_LDD=none ANYR_TEST_ROOT="${tmpdir}/alpine"
+libc_case no-ldd linux-x86_64 FAKE_LDD=none
+libc_case arm64-old-glibc linux-arm64-musl FAKE_LDD=2.31 FAKE_UNAME_M=aarch64
+libc_case force-gnu linux-x86_64 FAKE_LDD=musl ANYR_LIBC=gnu
+libc_case force-musl linux-x86_64-musl FAKE_LDD=2.39 ANYR_LIBC=musl
+libc_case darwin-ignores-libc darwin-arm64 FAKE_LDD=musl FAKE_UNAME_S=Darwin FAKE_UNAME_M=arm64 ANYR_LIBC=musl
+
+set +e
+env -u GH_TOKEN -u GITHUB_TOKEN PATH="${stubs}:${PATH}" FAKE_LDD=2.39 ANYR_LIBC=uclibc \
+  ANYR_CURL="$FAKE_CURL" ANYR_VERSION=0.1.20 ANYR_BIN_DIR="${tmpdir}/bin-libc-bad" \
+  bash "$SETUP" >"${tmpdir}/libc-bad.log" 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] && grep -q 'ANYR_LIBC must be musl or gnu' "${tmpdir}/libc-bad.log" || {
+  echo "ANYR_LIBC=uclibc must abort (rc=${rc}):" >&2
+  cat "${tmpdir}/libc-bad.log" >&2
+  exit 1
+}
+
+# CI checks each gnu build against GLIBC_BASELINE; keep that number parseable.
+grep -qE '^GLIBC_BASELINE="[0-9]+\.[0-9]+"$' "$SETUP"
 
 echo "setup-sh.test.sh ok"
