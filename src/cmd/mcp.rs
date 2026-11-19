@@ -343,7 +343,7 @@ fn auto(
     if parsed.flag_true("json") {
         print_json(&json!({ "auto": on }));
     } else if on {
-        println!("MCP auto-connect: on (the gateway when your workspace turns it on in the dashboard → MCP, otherwise its artifact tools)");
+        println!("MCP auto-connect: on (the gateway in search mode unless your workspace turns it off in the dashboard → MCP)");
     } else {
         println!(
             "MCP auto-connect: off on this machine. `{} mcp auto on` turns it back on.",

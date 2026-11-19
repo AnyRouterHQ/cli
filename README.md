@@ -650,11 +650,14 @@ a file. `--dry-run` prints the command and environment (key masked), and
 
 **MCP auto-connect.** On every agent marked "yes", anyr connects one MCP server
 named `anyrouter` with the key the launch uses (read from `$ANYROUTER_API_KEY`,
-never written to your config files). When **Auto-connect in coding agents** is
-on in the dashboard it is the whole gateway; otherwise it is the artifact tools
-alone (`/api/v1/mcp?tools=artifacts`: `publish_artifact`, `list_artifacts`,
-`get_artifact`, `delete_artifact`, `set_artifact_visibility`), so the agent can
-publish a page and hand you a link with no setup. Nothing is connected when the
+never written to your config files). It is the whole gateway in search mode
+(`/api/v1/mcp?tools=search`): the agent sees the artifact tools, `list_models`,
+`recommend_model`, and `search_tools` plus `call_tool`, which find and run every
+other tool your key may use, including your workspace's connected servers. The
+tool list stays short however many servers you connect, and the agent can publish
+a page and hand you a link with no setup. Against a gateway without search mode,
+anyr connects the whole gateway when **Auto-connect in coding agents** is on, and
+otherwise the artifact tools alone (`/api/v1/mcp?tools=artifacts`). Nothing is connected when the
 workspace owner turns auto-connect off, with `--no-mcp`, or after
 `anyr mcp auto off`. Agents marked "no" print one line saying so on an
 interactive launch, and nothing in scripts.

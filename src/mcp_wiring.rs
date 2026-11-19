@@ -2,11 +2,14 @@
 //!
 //! `anyr <agent>` asks the gateway (`GET /v1/mcp/config`, with the inference
 //! key it launches with) what to connect, then hands the agent one MCP server
-//! the way that agent takes config. With "auto-connect in coding agents" on it
-//! is the whole gateway; otherwise it is the artifact tools alone
-//! (`/v1/mcp?tools=artifacts`), so the agent can publish a page and hand back a
-//! link with no setup. Only an owner who turns auto-connect off explicitly, or
-//! a key that may not publish artifacts, gets neither. Per-launch config wins wherever the agent has it, so nothing of the
+//! the way that agent takes config. By default it is the whole gateway in
+//! search mode (`/v1/mcp?tools=search`): `tools/list` holds a few tools plus
+//! `search_tools` and `call_tool`, which find and run the rest, so the agent's
+//! context stays small however many servers the workspace connects. A gateway
+//! that predates search mode answers the older way: the whole gateway with
+//! "auto-connect in coding agents" on, otherwise the artifact tools alone
+//! (`/v1/mcp?tools=artifacts`). Only an owner who turns auto-connect off
+//! explicitly, or a key that may not use the gateway, gets none of them. Per-launch config wins wherever the agent has it, so nothing of the
 //! user's is edited. The agent reads the key from `ANYROUTER_API_KEY`, never
 //! from argv or a file it shares with other tools.
 //!
@@ -117,6 +120,8 @@ pub(crate) enum Decision {
 /// What the gateway said about auto-connect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Setting {
+    /// The whole gateway in search mode: the default.
+    Search,
     On,
     /// Full auto-connect is off, but the artifact tools are on.
     Artifacts,
@@ -184,6 +189,9 @@ fn decide_with(input: &DecideInput<'_>, fetch: &dyn Fn(&str, &str) -> Lookup) ->
         }
     };
     match looked_up {
+        Ok(Setting::Search) => Decision::On {
+            url: search_url(input.base),
+        },
         Ok(Setting::On) => Decision::On {
             url: mcp_url(input.base),
         },
@@ -206,6 +214,11 @@ pub(crate) fn artifacts_url(base: &str) -> String {
     format!("{}?tools=artifacts", mcp_url(base))
 }
 
+/// The whole gateway with a short `tools/list` and `search_tools` for the rest.
+pub(crate) fn search_url(base: &str) -> String {
+    format!("{}?tools=search", mcp_url(base))
+}
+
 /// `GET /v1/mcp/config`. 403 (key not allowed MCP) and 404 (older gateway) read
 /// as absent; anything else that isn't a 2xx is an error, which also means off.
 fn fetch_enabled(base: &str, key: &str) -> Lookup {
@@ -223,11 +236,18 @@ fn fetch_enabled(base: &str, key: &str) -> Lookup {
     }
 }
 
-/// `enabled` connects the whole gateway; failing that, `artifacts.enabled`
-/// connects the artifact tools. A gateway without the `artifacts` field
-/// predates them, so it gets only what it asked for.
+/// `search.enabled` connects the gateway in search mode. A gateway without the
+/// `search` field predates it: there `enabled` connects the whole gateway and,
+/// failing that, `artifacts.enabled` connects the artifact tools. A gateway
+/// without the `artifacts` field predates them, so it gets only what it asked for.
 fn parse_setting(v: &serde_json::Value) -> Option<Setting> {
-    if v.get("enabled")?.as_bool()? {
+    let enabled = v.get("enabled")?.as_bool()?;
+    if let Some(search) = v.get("search").and_then(|s| s.get("enabled")) {
+        if search.as_bool()? {
+            return Some(Setting::Search);
+        }
+    }
+    if enabled {
         return Some(Setting::On);
     }
     let artifacts = v
@@ -281,6 +301,7 @@ fn read_cache(path: &Path, key: &str, now: u64) -> Option<Lookup> {
         return None;
     }
     match row.get("state")?.as_str()? {
+        "search" => Some(Ok(Setting::Search)),
         "on" => Some(Ok(Setting::On)),
         "artifacts" => Some(Ok(Setting::Artifacts)),
         "off" => Some(Ok(Setting::Off)),
@@ -306,6 +327,7 @@ fn write_cache(path: &Path, key: &str, looked_up: &Lookup, now: u64) {
         let row = match looked_up {
             Ok(setting) => {
                 let state = match setting {
+                    Setting::Search => "search",
                     Setting::On => "on",
                     Setting::Artifacts => "artifacts",
                     Setting::Off => "off",
@@ -768,6 +790,64 @@ mod tests {
                 url: format!("{URL}?tools=artifacts")
             }
         );
+    }
+
+    #[test]
+    fn search_mode_is_the_default_and_older_gateways_keep_their_rule() {
+        let parse = |v: Value| parse_setting(&v);
+        assert_eq!(
+            parse(
+                serde_json::json!({"enabled": false, "artifacts": {"enabled": true},
+                "search": {"enabled": true}})
+            ),
+            Some(Setting::Search)
+        );
+        // The owner turned auto-connect off: the gateway says no to every mode.
+        assert_eq!(
+            parse(
+                serde_json::json!({"enabled": false, "artifacts": {"enabled": false},
+                "search": {"enabled": false}})
+            ),
+            Some(Setting::Off)
+        );
+        // Search off but the full gateway on (cannot happen today): the older rule.
+        assert_eq!(
+            parse(serde_json::json!({"enabled": true, "search": {"enabled": false}})),
+            Some(Setting::On)
+        );
+        // A gateway that predates search mode.
+        assert_eq!(
+            parse(serde_json::json!({"enabled": false, "artifacts": {"enabled": true}})),
+            Some(Setting::Artifacts)
+        );
+
+        let search = |_: &str, _: &str| Ok(Setting::Search);
+        for tool in ["claude", "codex", "opencode"] {
+            assert_eq!(
+                decide_with(&input(tool, None), &search),
+                Decision::On {
+                    url: format!("{URL}?tools=search")
+                },
+                "{tool}"
+            );
+        }
+        let mut i = input("claude", None);
+        i.no_mcp_flag = true;
+        assert!(matches!(decide_with(&i, &search), Decision::Off(_)));
+        let cfg = Config {
+            mcp_auto: Some(false),
+            ..Config::default()
+        };
+        assert!(matches!(
+            decide_with(&input("codex", Some(&cfg)), &search),
+            Decision::Off(_)
+        ));
+
+        let dir = tmp("search-cache");
+        let path = dir.join(CACHE_FILE);
+        let k = cache_key(BASE, KEY);
+        write_cache(&path, &k, &Ok(Setting::Search), 1_000);
+        assert_eq!(read_cache(&path, &k, 1_001), Some(Ok(Setting::Search)));
     }
 
     #[test]
