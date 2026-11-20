@@ -1117,6 +1117,7 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
         let current = Release {
             tag_name: VERSION.to_string(),
             prerelease: false,
+            published_at: None,
             assets: Vec::new(),
         };
         let body = serde_json::json!({
