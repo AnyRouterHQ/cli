@@ -416,6 +416,23 @@ fn update_check_listing_failure_stays_silent_like_no_new_version() {
 }
 
 #[test]
+fn update_check_without_a_release_asset_still_has_a_json_status() {
+    // A readable listing with no stable asset for this platform used to exit 1
+    // with only an `error` object, breaking `anyr update --check --json` (#427).
+    let mock = serve(vec![], Duration::ZERO);
+    let install = Install::new();
+    let out = install.run(&mock, &["update", "--check", "--json"], &[]);
+    assert!(
+        out.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["status"], "no_release", "{body}");
+    assert_eq!(body["current"], env!("CARGO_PKG_VERSION"), "{body}");
+}
+
+#[test]
 fn pending_update_applies_on_the_next_run_and_rollback_restores() {
     let mock = serve(vec![Release::good("v999.0.0", false)], Duration::ZERO);
     let install = Install::new();

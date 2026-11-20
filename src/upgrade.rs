@@ -1088,6 +1088,7 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
     }
     let channel = resolve_channel(parsed, env)?;
     let fixture = fixture_path(parsed, env);
+    let check = wants_check(parsed);
     let releases = match load_releases(fixture.as_deref(), env, None) {
         Ok(releases) => releases,
         Err(err) => {
@@ -1106,6 +1107,28 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
     let arch = current_arch();
     let asset = asset_name(os, arch);
     let candidates = channel_update_candidates(&releases, channel, &asset);
+    if check && parsed.flag_true("json") && candidates.is_empty() {
+        // A `--check --json` must always answer with a status, even when the
+        // configured channel has no release carrying our asset (#427). Keep
+        // the diagnostic for `anyr update --status`, but do not fail the
+        // check: the listing itself was readable and there is nothing to do.
+        let err = select_latest_release_with_asset(&releases, channel, &asset).unwrap_err();
+        record_update_error(env, &err);
+        let current = Release {
+            tag_name: VERSION.to_string(),
+            prerelease: false,
+            assets: Vec::new(),
+        };
+        let body = serde_json::json!({
+            "current": VERSION,
+            "latest": null,
+            "channel": channel.as_str(),
+            "status": "no_release",
+            "asset": release_asset_url(&current, os, arch),
+        });
+        println!("{body}");
+        return Ok(0);
+    }
     let latest = candidates
         .first()
         .cloned()
@@ -1114,7 +1137,6 @@ pub fn run(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32, S
     let latest_ver = latest.version_str();
     let allow_downgrade = switch.is_some() && parsed.flag_true("force");
     let plan = plan_update(VERSION, candidates, allow_downgrade);
-    let check = wants_check(parsed);
     let dry = parsed.flag_true("dry-run") || fixture.is_some();
 
     if check && parsed.flag_true("json") {
