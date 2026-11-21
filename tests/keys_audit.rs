@@ -69,7 +69,7 @@ fn home_with_key(tag: &str, key: &str) -> PathBuf {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join("config.yaml"),
-        format!("active_profile: default\nprofiles:\n  default:\n    api_key: {key}\n"),
+        format!("active_profile: default\nprofiles:\n  default:\n    api_key: {key}\n    management_key: ak_test_management_key_352\n"),
     )
     .unwrap();
     home
@@ -81,6 +81,7 @@ fn run(home: &PathBuf, base: &str, args: &[&str]) -> (i32, String, String) {
         .env("NO_COLOR", "1")
         .env("SSH_CONNECTION", "test")
         .env_remove("ANYROUTER_API_KEY")
+        .env_remove("ANYROUTER_MANAGEMENT_KEY")
         .env("ANYROUTER_HOME", home)
         .args(args)
         .args(["--base-url", base])

@@ -1,11 +1,12 @@
 //! `anyr keys create|show|update` scoping flags against a local scripted server.
 
 mod common;
-use common::{run, serve};
+use common::{run, run_with_env, serve};
 use std::time::Duration;
 
 const LIST: &str = r#"{"data":[{"hash":"abc123def456","name":"ci-bot","label":"sk-ar-v1-abc"}]}"#;
 const SECRET: &str = "sk-ar-v1-brandnewsecret0001";
+const MGMT: &str = "ak_test_management_key_352";
 
 fn created() -> (u16, String) {
     (
@@ -111,7 +112,7 @@ fn update_patches_only_given_fields_by_hash_prefix() {
             r#"{"name":"ci-bot","hash":"abc123def456","limit":50.0,"disabled":true}"#.into(),
         ),
     ]);
-    let (code, out, err) = run(
+    let (code, out, err) = run_with_env(
         &base,
         &[
             "keys",
@@ -123,16 +124,59 @@ fn update_patches_only_given_fields_by_hash_prefix() {
             "--json",
         ],
         None,
+        &[("ANYROUTER_MANAGEMENT_KEY", MGMT)],
     );
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(rx.recv().unwrap().path, "/api/v1/keys");
+    let listed = rx.recv().unwrap();
+    assert_eq!(listed.path, "/api/v1/keys");
+    assert!(
+        listed.auth.contains("sk-ar-v1-"),
+        "the list still uses the login key: {}",
+        listed.auth
+    );
     let patch = rx.recv().unwrap();
     assert_eq!(
         (patch.method.as_str(), patch.path.as_str()),
         ("PATCH", "/api/v1/keys/abc123def456")
     );
+    assert_eq!(
+        patch.auth,
+        format!("Bearer {MGMT}"),
+        "PATCH must use the management key, not the login key"
+    );
     let b: serde_json::Value = serde_json::from_str(&patch.body).unwrap();
     assert_eq!(b, serde_json::json!({"limit": 50.0, "disabled": true}));
+}
+
+#[test]
+fn update_without_management_key_exits_4_with_a_dashboard_hint() {
+    // WHY: the server now refuses sk-ar keys on PATCH. Tell the user how to get
+    // an ak_ key instead of letting the request 401 with a bare error.
+    let (base, _rx) = serve(vec![(200, LIST.into())]);
+    let (code, _, err) = run(&base, &["keys", "update", "abc123", "--limit", "1"], None);
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("ANYROUTER_MANAGEMENT_KEY"), "{err}");
+    assert!(err.contains("ak_"), "{err}");
+}
+
+#[test]
+fn update_with_a_rejected_management_key_points_at_both_fixes() {
+    let (base, _rx) = serve(vec![
+        (200, LIST.into()),
+        (401, r#"{"error":{"message":"invalid key"}}"#.into()),
+    ]);
+    let (code, _, err) = run_with_env(
+        &base,
+        &["keys", "update", "abc123", "--limit", "1"],
+        None,
+        &[("ANYROUTER_MANAGEMENT_KEY", "ak_rejected")],
+    );
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("write:llm-keys"), "{err}");
+    assert!(
+        err.contains("dashboard/keys") && err.contains("management-keys"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -306,19 +350,52 @@ fn create_if_missing_refuses_agent_and_revoke_if_exists_keeps_server_errors() {
     assert!(err.contains("--if-missing cannot save"), "{err}");
     // A failed DELETE that is not a 404 stays a failure.
     let (base, _rx) = serve(vec![(200, LIST.into()), (500, "{}".into())]);
-    let (code, _, err) = run(
+    let (code, _, err) = run_with_env(
         &base,
         &["keys", "revoke", "abc123", "--yes", "--if-exists"],
         None,
+        &[("ANYROUTER_MANAGEMENT_KEY", MGMT)],
     );
     assert_eq!(code, 1, "{err}");
     // A 404 on the DELETE itself (revoked since the list) is already gone.
     let (base, _rx) = serve(vec![(200, LIST.into()), (404, "{}".into())]);
-    let (code, out, err) = run(
+    let (code, out, err) = run_with_env(
         &base,
         &["keys", "revoke", "abc123", "--yes", "--if-exists", "--json"],
         None,
+        &[("ANYROUTER_MANAGEMENT_KEY", MGMT)],
     );
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("\"deleted\":false"), "{out}");
+}
+
+#[test]
+fn revoke_sends_the_management_key_and_explains_a_401() {
+    let (base, rx) = serve(vec![(200, LIST.into()), (200, "{}".into())]);
+    let (code, _, err) = run_with_env(
+        &base,
+        &["keys", "revoke", "abc123", "--yes"],
+        None,
+        &[("ANYROUTER_MANAGEMENT_KEY", MGMT)],
+    );
+    assert_eq!(code, 0, "{err}");
+    rx.recv().unwrap(); // GET /keys
+    let deleted = rx.recv().unwrap();
+    assert_eq!(deleted.method, "DELETE");
+    assert_eq!(
+        deleted.auth,
+        format!("Bearer {MGMT}"),
+        "DELETE must use the management key"
+    );
+
+    let (base, _rx) = serve(vec![(200, LIST.into()), (401, "{}".into())]);
+    let (code, _, err) = run_with_env(
+        &base,
+        &["keys", "revoke", "abc123", "--yes"],
+        None,
+        &[("ANYROUTER_MANAGEMENT_KEY", "ak_rejected")],
+    );
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("management key"), "{err}");
+    assert!(err.contains("dashboard/keys"), "{err}");
 }

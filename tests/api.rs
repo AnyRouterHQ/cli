@@ -76,6 +76,19 @@ fn run(args: &[&str]) -> (i32, String, String) {
     )
 }
 
+fn run_env(args: &[&str], envs: &[(&str, &str)]) -> (i32, String, String) {
+    let out = anyr()
+        .envs(envs.iter().copied())
+        .args(args)
+        .output()
+        .expect("spawn anyr");
+    (
+        out.status.code().unwrap_or(1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
 #[test]
 fn keys_list_pipes_tsv_with_bearer_key() {
     let (base, rx) = serve_once(
@@ -180,6 +193,69 @@ fn revoke_refuses_without_yes_when_not_interactive() {
     let (code, _, err) = run(&["api", "keys", "revoke", "h1", "--key", "sk-ar-test"]);
     assert_eq!(code, 6, "confirm_required");
     assert!(err.contains("--yes"), "{err}");
+}
+
+#[test]
+fn keys_update_requires_a_management_key_and_sends_it() {
+    // WHY: the server stopped accepting sk-ar keys on PATCH /keys/:hash.
+    let (code, _, err) = run(&[
+        "api",
+        "keys",
+        "update",
+        "h1",
+        "limit=1",
+        "--key",
+        "sk-ar-test",
+    ]);
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("ANYROUTER_MANAGEMENT_KEY"), "{err}");
+
+    let (base, rx) = serve_once(200, r#"{"ok":true}"#);
+    let (code, out, err) = run_env(
+        &[
+            "api",
+            "keys",
+            "update",
+            "h1",
+            "limit=1",
+            "--base-url",
+            &base,
+            "--key",
+            "sk-ar-test",
+        ],
+        &[("ANYROUTER_MANAGEMENT_KEY", "ak_test_mgmt_352")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let seen = rx.recv().unwrap();
+    assert!(
+        seen.starts_with("PATCH /api/v1/keys/h1 Bearer ak_test_mgmt_352"),
+        "{seen}"
+    );
+}
+
+#[test]
+fn keys_revoke_sends_the_management_key() {
+    let (base, rx) = serve_once(200, r#"{"ok":true}"#);
+    let (code, _, err) = run_env(
+        &[
+            "api",
+            "keys",
+            "revoke",
+            "h1",
+            "--yes",
+            "--base-url",
+            &base,
+            "--key",
+            "sk-ar-test",
+        ],
+        &[("ANYROUTER_MANAGEMENT_KEY", "ak_test_mgmt_352")],
+    );
+    assert_eq!(code, 0, "{err}");
+    let seen = rx.recv().unwrap();
+    assert!(
+        seen.starts_with("DELETE /api/v1/keys/h1 Bearer ak_test_mgmt_352"),
+        "{seen}"
+    );
 }
 
 #[test]

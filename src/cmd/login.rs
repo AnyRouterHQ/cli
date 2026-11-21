@@ -116,12 +116,17 @@ fn offer_revoke_after_relogin(
     let Some(prev) = previous_device_key(&rows, previous_key, new_key) else {
         return;
     };
-    let interactive = term::is_interactive() && !term::machine_output(parsed, env);
+    // DELETE /keys/{hash} refuses the sk-ar login key, so the revoke offer can
+    // only be accepted here with an ak_ management key. Without one, fall back
+    // to printing the command (the user can run it after exporting one).
+    let management_key = crate::api::context(parsed, env).management_key;
+    let interactive =
+        management_key.is_some() && term::is_interactive() && !term::machine_output(parsed, env);
     let result = offer_revoke_previous(
         &prev,
         interactive,
         term::confirm,
-        |hash| crate::http::delete_key(base, new_key, hash),
+        |hash| crate::http::delete_key(base, management_key.as_deref().unwrap_or(new_key), hash),
         &mut std::io::stderr(),
     );
     if let Err(err) = result {

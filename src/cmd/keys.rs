@@ -12,7 +12,7 @@ use crate::key::{
 use crate::parse::{get_string_flag, ParsedArgs};
 use crate::term;
 
-use crate::api::{get, send, Ctx};
+use crate::api::{get, send, send_key_mutation, Ctx};
 use crate::cmd::dispatch::{config_path, hint};
 use crate::cmd::key_audit::{last4, revoke_ref, short_ref, suggest_removals};
 use crate::cmd::key_scope::{render_show, scope_fields};
@@ -84,6 +84,22 @@ fn key_ctx(parsed: &ParsedArgs, base: &str, cred: &str) -> Ctx {
         management_key: None,
         json: parsed.flag_true("json"),
     }
+}
+
+/// PATCH and DELETE on `/keys/{hash}` refuse the `sk-ar-` login key: the hash
+/// is plain SHA-256, so a leaked login key could clear its own limits or
+/// revoke its siblings. Build the `ak_` context those routes need, with the
+/// same base URL the login key used.
+fn mutation_ctx(
+    parsed: &ParsedArgs,
+    env: &BTreeMap<String, String>,
+    base: &str,
+    what: &str,
+) -> Result<Ctx, String> {
+    let mut ctx =
+        crate::api::management_ctx(&crate::api::context(parsed, env), what, "write:llm-keys")?;
+    ctx.base = base.to_string();
+    Ok(ctx)
 }
 
 /// The one key matching `needle`: its id, its hash or a hash prefix, or the
@@ -417,23 +433,36 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
             })?;
             let (_path, _cfg, base, cred) = keys_credential(parsed, env)?;
             let ctx = key_ctx(parsed, &base, &cred);
-            let row = resolve_key(&fetch_keys(&base, &cred)?, &hash)?;
-            let url = format!("/v1/keys/{}", row.hash);
-            if sub == "update" {
+            // Keep a bad flag a usage error (exit 2) even before we check the
+            // management key - the user has not asked for a valid write yet.
+            let update_body = if sub == "update" {
                 let body = scope_fields(parsed, crate::civil::now_secs())?;
                 if body.is_empty() {
                     return Err(hint(
                         "Nothing to update. Pass --limit, --reset, --endpoints, --expires, --disable or --enable.",
                     ));
                 }
-                send(
-                    &ctx,
+                Some(body)
+            } else {
+                None
+            };
+            // Listing stays on the login key; the PATCH needs an ak_ key.
+            let mutation = if update_body.is_some() {
+                Some(mutation_ctx(parsed, env, &base, "key updates")?)
+            } else {
+                None
+            };
+            let row = resolve_key(&fetch_keys(&base, &cred)?, &hash)?;
+            let url = format!("/v1/keys/{}", row.hash);
+            if let (Some(mctx), Some(body)) = (mutation.as_ref(), update_body) {
+                send_key_mutation(
+                    mctx,
                     "PATCH",
                     &url,
                     Some(&serde_json::Value::Object(body).to_string()),
-                    true,
+                    "Key update",
                 )?;
-                if !ctx.json {
+                if !mctx.json {
                     println!(
                         "{}  updated \"{}\" ({})",
                         term::ok("Updated"),
@@ -443,8 +472,9 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                     return Ok(0);
                 }
             }
-            let key = get(&ctx, &url, true)?;
-            if ctx.json {
+            let read_ctx = mutation.as_ref().unwrap_or(&ctx);
+            let key = get(read_ctx, &url, true)?;
+            if read_ctx.json {
                 crate::cmd::view::print_json(&key);
             } else {
                 print!("{}", render_show(&key));
@@ -532,7 +562,8 @@ pub(crate) fn run_keys(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> R
                     return Ok(1);
                 }
             }
-            if let Err(e) = delete_key(&base, &cred, &row.hash) {
+            let mctx = mutation_ctx(parsed, env, &base, "key revocation")?;
+            if let Err(e) = delete_key(&base, mctx.key()?, &row.hash) {
                 // Revoked by someone else since the list: already gone.
                 if crate::api::absent_ok(parsed, &e, "key", &hash) {
                     return Ok(0);

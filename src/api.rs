@@ -270,14 +270,15 @@ fn run_inner(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32,
             let hash = arg("hash")?;
             let body =
                 body_from(parsed, &rest[1..])?.ok_or("nothing to update: pass field=value")?;
+            let mctx = management_ctx(&ctx, "key updates", "write:llm-keys")?;
             show(
-                &ctx,
-                send(
-                    &ctx,
+                &mctx,
+                send_key_mutation(
+                    &mctx,
                     "PATCH",
                     &format!("/v1/keys/{hash}"),
                     Some(&body),
-                    true,
+                    "Key update",
                 )?,
                 &[],
             )
@@ -285,7 +286,14 @@ fn run_inner(parsed: &ParsedArgs, env: &BTreeMap<String, String>) -> Result<i32,
         ("keys", "revoke") => {
             let hash = arg("hash")?;
             confirm(parsed, &format!("Revoke key {hash}?"))?;
-            send(&ctx, "DELETE", &format!("/v1/keys/{hash}"), None, true)?;
+            let mctx = management_ctx(&ctx, "key revocation", "write:llm-keys")?;
+            send_key_mutation(
+                &mctx,
+                "DELETE",
+                &format!("/v1/keys/{hash}"),
+                None,
+                "Key revocation",
+            )?;
             eprintln!("{} revoked {hash}", term::ok("✓"));
             Ok(0)
         }
@@ -604,6 +612,24 @@ pub(crate) fn request_with(
 
 pub(crate) fn get(ctx: &Ctx, path: &str, auth: bool) -> Result<Value, String> {
     send(ctx, "GET", path, None, auth)
+}
+
+/// `PATCH`/`DELETE /v1/keys/{hash}` reject the `sk-ar-` login key with a bare
+/// 401. Callers pass a management context; translate that 401 into the two
+/// concrete ways out (an `ak_` key, or the dashboard).
+pub(crate) fn send_key_mutation(
+    ctx: &Ctx,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    what: &str,
+) -> Result<Value, String> {
+    send(ctx, method, path, body, true).map_err(|e| {
+        if e.contains("HTTP 401") || e.contains("HTTP 403") {
+            return crate::http::key_management_auth_error(what);
+        }
+        e
+    })
 }
 
 pub(crate) fn send(

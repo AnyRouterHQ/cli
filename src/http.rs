@@ -832,6 +832,21 @@ pub fn scope_error(scope: &str) -> String {
     )
 }
 
+/// `/v1/keys/{hash}` PATCH and DELETE take a management key (`ak_…`) with
+/// `write:llm-keys`, never the `sk-ar-` login key. The server answers a 401
+/// with a bare "unauthorized", so name both fixes here: get the right key,
+/// and use the dashboard if the user just wants to edit a key.
+pub fn key_management_auth_error(what: &str) -> String {
+    crate::exit::tag(
+        crate::exit::AUTH,
+        format!(
+            "HTTP 401: {what} needs a management key (ak_…, scope write:llm-keys), not your login key.\n{} create one at https://anyrouter.dev/settings/management-keys, then:\n      export ANYROUTER_MANAGEMENT_KEY=ak_…\n{} manage keys at https://anyrouter.dev/dashboard/keys",
+            crate::term::dim("hint:"),
+            crate::term::dim("or:")
+        ),
+    )
+}
+
 pub fn fetch_credits(base_url: &str, api_key: &str) -> Result<serde_json::Value, String> {
     let url = join_api(base_url, "/v1/credits");
     let (status, body) = http_get(&url, Some(api_key))?;
@@ -1116,6 +1131,9 @@ pub fn fetch_keys(base_url: &str, credential: &str) -> Result<Vec<RemoteKey>, St
 pub fn delete_key(base_url: &str, credential: &str, hash: &str) -> Result<(), String> {
     let url = join_api(base_url, &format!("/v1/keys/{hash}"));
     let (status, _body) = http_delete(&url, Some(credential))?;
+    if status == 401 || status == 403 {
+        return Err(key_management_auth_error("Key revocation"));
+    }
     if !(200..300).contains(&status) {
         return Err(crate::exit::tag(
             crate::exit::for_status(status),

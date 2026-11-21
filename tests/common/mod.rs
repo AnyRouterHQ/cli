@@ -72,11 +72,22 @@ pub fn serve(replies: Vec<(u16, String)>) -> (String, mpsc::Receiver<Seen>) {
 /// Run `anyr <args> --base-url <base>` with a throwaway home; returns
 /// (exit code, stdout, stderr). stdin is `input` or /dev/null.
 pub fn run(base: &str, args: &[&str], input: Option<&str>) -> (i32, String, String) {
+    run_with_env(base, args, input, &[])
+}
+
+/// Like `run`, with extra environment variables (e.g. a management key).
+pub fn run_with_env(
+    base: &str,
+    args: &[&str],
+    input: Option<&str>,
+    envs: &[(&str, &str)],
+) -> (i32, String, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_anyr"));
     cmd.env("ANYR_NO_UPDATE", "1")
         .env("NO_COLOR", "1")
         .env("ANYROUTER_API_KEY", KEY)
         .env_remove("ANYROUTER_MANAGEMENT_KEY")
+        .envs(envs.iter().copied())
         .env(
             "ANYROUTER_HOME",
             std::env::temp_dir().join("anyr-common-test-empty"),
