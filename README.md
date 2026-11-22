@@ -701,7 +701,7 @@ keeps it in sync:
 | Flag | claude | codex | grok | opencode | pi | pool | qwen | goose | aider | crush | kilo | fx |
 |------|---|---|---|---|---|---|---|---|---|---|---|---|
 | `--yolo` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--always-approve` | `--auto` | no | `--mode always-allow` * | `--approval-mode yolo` | env `GOOSE_MODE=auto` | `--yes-always` | `-y` | `--auto` | env `FX_PERMISSION_MODE=full-access` |
-| `--effort <level>` | env `MAX_THINKING_TOKENS` | `-c model_reasoning_effort="<level>"` | `--reasoning-effort <level>` | no | `--thinking <level>` | no | no | no | `--reasoning-effort <level>` | no | no | `--effort <level>` |
+| `--effort <level>` | env `MAX_THINKING_TOKENS` | `-c model_reasoning_effort="<level>"` | `--reasoning-effort <level>` | no | `--thinking <level>` | no | no | no | `--reasoning-effort <level>` | no | no | no |
 | `--print` | `-p` | `exec` | `--single` | `run` | `-p` | no | `-p` | no | `--message` | `run` | `run` | `ask` |
 | `--continue` | `--continue` | `resume --last` | `--continue` | `--continue` | `--continue` | no | `--continue` | no | `--restore-chat-history` | `--continue` | `--continue` | `--continue` |
 | `--resume [<id>]` | `--resume <id>` | `resume <id>` | `--resume <id>` | `--session <id>` | `--session <id>` | `--resume <id>` * | `--resume <id>` | `--resume --session-id <id>` | no | `--session <id>` | `--session <id>` | `--resume <id>` |

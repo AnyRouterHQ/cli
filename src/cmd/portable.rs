@@ -287,7 +287,12 @@ pub(crate) const ALIASES: &[Alias] = &[
                 "kilo",
                 Native::Unsupported("a reasoning-effort flag only on `kilo run`"),
             ),
-            ("fx", argv(&["--effort", "{}"], &["--effort"]).native()),
+            // fx sends no reasoning effort on a custom connection, which is
+            // the only way anyr launches it; `--effort` is accepted and dropped.
+            (
+                "fx",
+                Native::Unsupported("no reasoning effort over a custom connection"),
+            ),
         ],
     },
     Alias {
@@ -1324,6 +1329,17 @@ mod tests {
         assert_eq!(
             run("goose", &["session", "--resume", "abc"]).args,
             s(&["session", "--resume", "--session-id", "abc"])
+        );
+    }
+
+    #[test]
+    fn fx_effort_is_dropped_with_a_notice_because_its_connection_never_sends_it() {
+        let lead = [("effort", Some("high".to_string()))];
+        let t = apply("fx", &lead, &[], 0).unwrap();
+        assert!(t.args.is_empty(), "no --effort reaches fx: {:?}", t.args);
+        assert_eq!(
+            t.notices,
+            vec!["fx has no reasoning effort over a custom connection; ignoring --effort."]
         );
     }
 
